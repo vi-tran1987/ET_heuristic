@@ -2,6 +2,7 @@ package se.bth;
 
 import java.io.File;
 import java.util.List;
+import java.util.ArrayList;
 import java.util.LinkedList;
 
 import java.io.IOException;
@@ -14,6 +15,7 @@ import com.github.javaparser.ParseResult;
 
 import com.github.javaparser.ast.CompilationUnit;
 import com.github.javaparser.ast.Node;
+import com.github.javaparser.ast.body.AnnotationDeclaration;
 import com.github.javaparser.ast.body.MethodDeclaration;
 import com.github.javaparser.ast.expr.AssignExpr;
 import com.github.javaparser.ast.expr.Expression;
@@ -22,6 +24,9 @@ import com.github.javaparser.ast.expr.MethodCallExpr;
 import com.github.javaparser.ast.expr.NameExpr;
 import com.github.javaparser.ast.expr.ThisExpr;
 import com.github.javaparser.ast.expr.UnaryExpr;
+import com.github.javaparser.ast.stmt.ReturnStmt;
+import com.github.javaparser.ast.stmt.Statement;
+import com.github.javaparser.ast.visitor.GenericVisitorAdapter;
 import com.github.javaparser.resolution.UnsolvedSymbolException;
 import com.github.javaparser.resolution.declarations.ResolvedFieldDeclaration;
 import com.github.javaparser.resolution.declarations.ResolvedMethodDeclaration;
@@ -40,6 +45,15 @@ import com.github.javaparser.utils.SourceRoot;
 public class MyParser {
 
     private List<CompilationUnit> allCus;
+    
+    private final int undentifiedFieldInteractionType = 0;
+    private final int isModifiedOnly = 1;
+    private final int isReturnedOnly = 2;
+    private final int isModifiedNReturned = 3;
+    private final int isInitialized = 4;
+    
+    private final boolean isPotentialGet = true;
+    private final boolean isPotentialInternalProducer = true;
 
     public MyParser(File javaDir, File testDir) throws IOException {
 
@@ -96,70 +110,146 @@ public class MyParser {
         }
     }
 
-    private boolean isModified(Expression expr) {
-        boolean isMutator = false;
+    private int getFieldInteractionType (Expression originalExpr) {
+    	boolean fromReturnStmt = false;
         Expression targetExpression = null;
-
-        if (expr.getParentNode().isPresent()) {
-        	System.out.println("parentNode: " + expr.getParentNode().toString());
-            Expression parentExpr = (Expression) expr.getParentNode().get();
-            if (parentExpr instanceof UnaryExpr) {
-                targetExpression = ((UnaryExpr) parentExpr).getExpression();
-            } else if (parentExpr instanceof AssignExpr) {
-                targetExpression = ((AssignExpr) parentExpr).getTarget();
+        Expression expr = null;
+        if (originalExpr.getParentNode().isPresent()) {
+        	System.out.println("\tparentNode: " + originalExpr.getParentNode().toString());
+        	Node parentNode = originalExpr.getParentNode().get();
+        	if (parentNode instanceof ReturnStmt) {
+        		expr = originalExpr;
+        		fromReturnStmt = true;
+        	}
+        	else if (parentNode instanceof Expression) {
+        		expr = (Expression) parentNode;
+        	}
+        	
+//        		Expression parentExpr = (Expression) parentNode;
+            if (expr instanceof UnaryExpr) {
+            	targetExpression = ((UnaryExpr) expr).getExpression();
+            	if(originalExpr.equals(targetExpression)) {
+            		if (fromReturnStmt)
+            			return isModifiedNReturned;
+            		else
+            			return isModifiedOnly;
+            	}            		
+            } else if (expr instanceof AssignExpr) {
+                targetExpression = ((AssignExpr) expr).getTarget();
+                if (originalExpr.equals(targetExpression))
+                	return isModifiedOnly;
             }
-            isMutator = expr.equals(targetExpression);
+            if (fromReturnStmt) {
+            	return isReturnedOnly; //meaning simple return statement like "return attrA;"
+            }    
+//            else
+//            	return isRetrievedOnly; // meaning without returning, i.e., used by internal producer method
         }
-
-        return isMutator;
+        return undentifiedFieldInteractionType;
     }
 
+    private boolean updateFieldsAccessListByCalledMethod(Expression expr, String fieldAccess, ArrayList<String> modifiedFields, ArrayList<String> returnedFields, ArrayList<String> retrievedFields)
+    {
+    	boolean isMutator = false;
+    	int fieldInteractionType = this.getFieldInteractionType(expr);
+    	if (fieldInteractionType == isModifiedOnly || fieldInteractionType == isModifiedNReturned) {
+    		isMutator |= true;
+    		if (!modifiedFields.contains(fieldAccess)) 
+    			modifiedFields.add(fieldAccess);
+    	}
+    	else if (fieldInteractionType == isReturnedOnly || fieldInteractionType == isModifiedNReturned) {
+    		if (!returnedFields.contains(fieldAccess)) 
+    			returnedFields.add(fieldAccess);
+    	}
+    	if (!retrievedFields.contains(fieldAccess)) 
+			retrievedFields.add(fieldAccess);
+    	
+    	return isMutator;
+    }
+    
+    private boolean[] isPotentialAccessorMethod (MethodDeclaration method) {
+    	int numStmts = 0;
+        boolean hasReturnStmt = false;
+        boolean[] returnValues = new boolean[2];
+        for (Statement stmt: method.findAll(Statement.class)) {
+        	numStmts++;
+        	if (stmt.isReturnStmt()) {
+        		hasReturnStmt = true;
+        	}
+        }
+        if (numStmts == 2 && hasReturnStmt) //1st stmt is the block stmt of the method
+        	returnValues[0] = isPotentialGet;
+        if (hasReturnStmt)
+        	returnValues[1] = isPotentialInternalProducer;
+        
+        return returnValues;
+    }
+    
+    
     private void analyzeCalledMethod(MethodDeclaration method, String callingObject) {
+    	
         boolean isMutator = false;
-
+        boolean isGet = false;
+        boolean isInternalProducer = false;
+        boolean[] isPotentialAccessor = new boolean[2];
+        
+        ArrayList<String> modifiedFields = new ArrayList<String>();
+        ArrayList<String> returnedFields = new ArrayList<String>();
+        ArrayList<String> retrievedFields = new ArrayList<String>();
+                
         // check all field accesses
         for (FieldAccessExpr expr: method.findAll(FieldAccessExpr.class)) {
-            isMutator |= this.isModified(expr);
+        	String fieldAccess = null;       	        	
             Expression scope = expr.getScope();
             if (scope instanceof ThisExpr) {
                 ThisExpr thisExpr = (ThisExpr) scope;
                 ResolvedTypeDeclaration type = thisExpr.resolve();
-                System.out.println("\tField Access: "
-                                   + type.getQualifiedName() + "."
-                                   + callingObject + "."
-                                   + expr.getNameAsString());
+                fieldAccess = type.getQualifiedName() + "." + callingObject + "." + expr.getNameAsString();
+                System.out.println("\tField Access: " + fieldAccess);
             } else if (scope instanceof NameExpr) {
                 NameExpr nameExpr = (NameExpr) scope;
                 ResolvedValueDeclaration value = nameExpr.resolve();
                 ResolvedReferenceType type = value.getType().asReferenceType();
-//                System.out.println("nameExpr: " + nameExpr.getNameAsString() + "; " +
-//                				   "value: " + value.getName() + "; " +
-//                				   "type: " + type.getQualifiedName());
-                System.out.println("\tField Access: "
-                                   + type.getQualifiedName() + "."
-                                   + value.getName() + "."
-                                   + callingObject + "."
-                                   + expr.getNameAsString());
+                fieldAccess = type.getQualifiedName() + "." + value.getName() + "." + callingObject + "."
+                			+ expr.getNameAsString();
+                System.out.println("\tField Access: " + fieldAccess);
             } else {
                 throw new RuntimeException("Unknown instance for: " + scope);
             }
+
+            isMutator |= updateFieldsAccessListByCalledMethod(expr, fieldAccess, modifiedFields, returnedFields, retrievedFields);        	
         }
+        
         // check for fields which are accessed simply by name
         for (NameExpr expr: method.findAll(NameExpr.class)) {
+        	String classField = null;
             ResolvedValueDeclaration value = expr.resolve();
             if (value.isField()) {
                 ResolvedFieldDeclaration field = (ResolvedFieldDeclaration) value;
                 ResolvedTypeDeclaration type = field.declaringType();
-                System.out.println("\tClass field: "
-                                   + type.getQualifiedName() + "."
-                                   + callingObject + "."
-                                   + field.getName());
+                classField = type.getQualifiedName() + "." + callingObject + "." + field.getName();
+                System.out.println("\tClass field: " + classField);
 
-                isMutator |= this.isModified(expr);
+                isMutator |= updateFieldsAccessListByCalledMethod(expr, classField, modifiedFields, returnedFields, retrievedFields);
             }
         }
-        if (isMutator) {
-            System.out.println("is Mutator!");
+
+		System.out.println("\tModified Fields: " + modifiedFields.toString());
+		System.out.println("\tReturned Fields: " + returnedFields.toString());
+		System.out.println("\tRetrieved Fields: " + retrievedFields.toString());
+		
+		//identify method type
+		isPotentialAccessor = isPotentialAccessorMethod(method);
+		if (isMutator) {
+            System.out.println("is Mutator!");            
+        }
+        else if (isPotentialAccessor[0] == isPotentialGet && returnedFields.size() == 1) {
+        	isGet = true;
+        	System.out.println("is Get!"); 
+        }
+        else if (isPotentialAccessor[0] == isPotentialInternalProducer && returnedFields.size() == 0 && retrievedFields.size() > 1) {
+        	isInternalProducer = true;
+        	System.out.println("is Internal Producer!"); 
         }
     }
 
@@ -202,3 +292,5 @@ public class MyParser {
         return res;
     }
 }
+
+
