@@ -22,6 +22,7 @@ import com.github.javaparser.ast.expr.Expression;
 import com.github.javaparser.ast.expr.FieldAccessExpr;
 import com.github.javaparser.ast.expr.MethodCallExpr;
 import com.github.javaparser.ast.expr.NameExpr;
+import com.github.javaparser.ast.expr.ObjectCreationExpr;
 import com.github.javaparser.ast.expr.ThisExpr;
 import com.github.javaparser.ast.expr.UnaryExpr;
 import com.github.javaparser.ast.stmt.ReturnStmt;
@@ -100,7 +101,8 @@ public class MyParser {
                     if (handleMethodExpression((MethodCallExpr) expr)) {
                         assertCount++;
                     }
-                } else if (expr instanceof AssignExpr) {
+                } 
+                else if (expr instanceof AssignExpr) {
                     Expression variable = ((AssignExpr) expr).getTarget();
                     System.out.println("\tAssigned: " + variable);
                 }
@@ -148,12 +150,12 @@ public class MyParser {
         return undentifiedFieldInteractionType;
     }
 
-    private boolean updateFieldsAccessListByCalledMethod(Expression expr, String fieldAccess, ArrayList<String> modifiedFields, ArrayList<String> returnedFields, ArrayList<String> retrievedFields)
+    private void updateFieldsAccessListByCalledMethod(Expression expr, String fieldAccess, ArrayList<String> modifiedFields, ArrayList<String> returnedFields, ArrayList<String> retrievedFields)
     {
-    	boolean isMutator = false;
+//    	boolean isMutator = false;
     	int fieldInteractionType = this.getFieldInteractionType(expr);
     	if (fieldInteractionType == isModifiedOnly || fieldInteractionType == isModifiedNReturned) {
-    		isMutator |= true;
+//    		isMutator |= true;
     		if (!modifiedFields.contains(fieldAccess)) 
     			modifiedFields.add(fieldAccess);
     	}
@@ -164,7 +166,7 @@ public class MyParser {
     	if (!retrievedFields.contains(fieldAccess)) 
 			retrievedFields.add(fieldAccess);
     	
-    	return isMutator;
+//    	return isMutator;
     }
     
     private boolean[] isPotentialAccessorMethod (MethodDeclaration method) {
@@ -186,17 +188,14 @@ public class MyParser {
     }
     
     
-    private void analyzeCalledMethod(MethodDeclaration method, String callingObject) {
+    private void analyzeCalledMethod(MethodDeclaration method, String callingObject, 
+    	ArrayList<String> modifiedFields, ArrayList<String> returnedFields, ArrayList<String> retrievedFields) {
     	
-        boolean isMutator = false;
+//        boolean isMutator = false;
         boolean isGet = false;
         boolean isInternalProducer = false;
         boolean[] isPotentialAccessor = new boolean[2];
         
-        ArrayList<String> modifiedFields = new ArrayList<String>();
-        ArrayList<String> returnedFields = new ArrayList<String>();
-        ArrayList<String> retrievedFields = new ArrayList<String>();
-                
         // check all field accesses
         for (FieldAccessExpr expr: method.findAll(FieldAccessExpr.class)) {
         	String fieldAccess = null;       	        	
@@ -217,7 +216,7 @@ public class MyParser {
                 throw new RuntimeException("Unknown instance for: " + scope);
             }
 
-            isMutator |= updateFieldsAccessListByCalledMethod(expr, fieldAccess, modifiedFields, returnedFields, retrievedFields);        	
+            updateFieldsAccessListByCalledMethod(expr, fieldAccess, modifiedFields, returnedFields, retrievedFields);        	
         }
         
         // check for fields which are accessed simply by name
@@ -230,7 +229,76 @@ public class MyParser {
                 classField = type.getQualifiedName() + "." + callingObject + "." + field.getName();
                 System.out.println("\tClass field: " + classField);
 
-                isMutator |= updateFieldsAccessListByCalledMethod(expr, classField, modifiedFields, returnedFields, retrievedFields);
+                updateFieldsAccessListByCalledMethod(expr, classField, modifiedFields, returnedFields, retrievedFields);
+            }
+        }
+
+//		System.out.println("\tModified Fields: " + modifiedFields.toString());
+//		System.out.println("\tReturned Fields: " + returnedFields.toString());
+//		System.out.println("\tRetrieved Fields: " + retrievedFields.toString());
+//		
+//		//identify method type
+//		isPotentialAccessor = isPotentialAccessorMethod(method);
+////		if (isMutator) {
+//		if (modifiedFields.size() > 0) {
+//            System.out.println("is Mutator!");            
+//        }
+//        else if (isPotentialAccessor[0] == isPotentialGet && returnedFields.size() == 1) {
+//        	isGet = true;
+//        	System.out.println("is Get!"); 
+//        }
+//        else if (isPotentialAccessor[0] == isPotentialInternalProducer && returnedFields.size() == 0 && retrievedFields.size() > 1) {
+//        	isInternalProducer = true;
+//        	System.out.println("is Internal Producer!"); 
+//        }
+    }
+    
+private void analyzeInnerCalledMethod(MethodDeclaration method, String callingObject, 
+    	ArrayList<String> modifiedFields, ArrayList<String> returnedFields, ArrayList<String> retrievedFields) {
+    	
+//        boolean isMutator = false;
+        boolean isGet = false;
+        boolean isInternalProducer = false;
+        boolean[] isPotentialAccessor = new boolean[2];
+//        
+//        ArrayList<String> modifiedFields = new ArrayList<String>();
+//        ArrayList<String> returnedFields = new ArrayList<String>();
+//        ArrayList<String> retrievedFields = new ArrayList<String>();
+               
+        // check all field accesses
+        for (FieldAccessExpr expr: method.findAll(FieldAccessExpr.class)) {
+        	String fieldAccess = null;       	        	
+            Expression scope = expr.getScope();
+            if (scope instanceof ThisExpr) {
+                ThisExpr thisExpr = (ThisExpr) scope;
+                ResolvedTypeDeclaration type = thisExpr.resolve();
+                fieldAccess = type.getQualifiedName() + "." + callingObject + "." + expr.getNameAsString();
+                System.out.println("\tField Access: " + fieldAccess);
+            } else if (scope instanceof NameExpr) {
+                NameExpr nameExpr = (NameExpr) scope;
+                ResolvedValueDeclaration value = nameExpr.resolve();
+                ResolvedReferenceType type = value.getType().asReferenceType();
+                fieldAccess = type.getQualifiedName() + "." + value.getName() + "." + callingObject + "."
+                			+ expr.getNameAsString();
+                System.out.println("\tField Access: " + fieldAccess);
+            } else {
+                throw new RuntimeException("Unknown instance for: " + scope);
+            }
+
+            updateFieldsAccessListByCalledMethod(expr, fieldAccess, modifiedFields, returnedFields, retrievedFields);
+        }
+        
+        // check for fields which are accessed simply by name
+        for (NameExpr expr: method.findAll(NameExpr.class)) {
+        	String classField = null;
+            ResolvedValueDeclaration value = expr.resolve();
+            if (value.isField()) {
+                ResolvedFieldDeclaration field = (ResolvedFieldDeclaration) value;
+                ResolvedTypeDeclaration type = field.declaringType();
+                classField = type.getQualifiedName() + "." + callingObject + "." + field.getName();
+                System.out.println("\tClass field: " + classField);
+
+                updateFieldsAccessListByCalledMethod(expr, classField, modifiedFields, returnedFields, retrievedFields);
             }
         }
 
@@ -240,18 +308,42 @@ public class MyParser {
 		
 		//identify method type
 		isPotentialAccessor = isPotentialAccessorMethod(method);
-		if (isMutator) {
-            System.out.println("is Mutator!");            
+		if (modifiedFields.size() > 0) {
+            System.out.println("\tInner method is Mutator!");            
         }
         else if (isPotentialAccessor[0] == isPotentialGet && returnedFields.size() == 1) {
         	isGet = true;
-        	System.out.println("is Get!"); 
+        	System.out.println("\tInner method is Get!"); 
         }
-        else if (isPotentialAccessor[0] == isPotentialInternalProducer && returnedFields.size() == 0 && retrievedFields.size() > 1) {
+        else if (isPotentialAccessor[1] == isPotentialInternalProducer && returnedFields.size() == 0 && retrievedFields.size() > 1) {
         	isInternalProducer = true;
-        	System.out.println("is Internal Producer!"); 
+        	System.out.println("\tInner method is Internal Producer!"); 
         }
     }
+
+    private void handleInnerMethodExpression(MethodCallExpr call, String callingObject, 
+        	ArrayList<String> modifiedFields, ArrayList<String> returnedFields, ArrayList<String> retrievedFields) {
+        System.out.println("Inner Call: " + call.getNameAsString());
+        try {
+            ResolvedMethodDeclaration declaration = call.resolve();
+            if (declaration instanceof JavaParserMethodDeclaration) {
+                MethodDeclaration d = ((JavaParserMethodDeclaration) declaration).getWrappedNode();
+                System.out.println("Inner Lines: " + d.getRange());
+                // get calling object name
+//                if (call.getScope().isPresent())
+//                	callingObject = call.getScope().get().toString();                	
+                analyzeInnerCalledMethod(d, callingObject, modifiedFields, returnedFields, retrievedFields);
+                d.findAll(Expression.class).forEach(c -> System.out.println("\tInner Call: " + c));
+                d.findAll(MethodCallExpr.class).forEach(c -> handleInnerMethodExpression(c, callingObject, modifiedFields, returnedFields, retrievedFields));
+            } else {
+                // I don't know if this will ever happen
+                System.out.println("WARN: strange method found: " + declaration);
+            }
+        } catch(UnsolvedSymbolException e){
+            System.out.println(e.getName()); 
+        }
+    }
+
 
     private boolean handleMethodExpression(MethodCallExpr call) {
         boolean isAssert = false;
@@ -262,13 +354,39 @@ public class MyParser {
             // Basically, failure indicates external methods
             ResolvedMethodDeclaration declaration = call.resolve();
             if (declaration instanceof JavaParserMethodDeclaration) {
-                MethodDeclaration d = ((JavaParserMethodDeclaration) declaration).getWrappedNode();
+                MethodDeclaration methDeclaration = ((JavaParserMethodDeclaration) declaration).getWrappedNode();
                 // TODO: classify methods
-                System.out.println("Lines: " + d.getRange());
+                System.out.println("Lines: " + methDeclaration.getRange());
                 // get calling object name
                 String callingObject = call.getScope().get().toString();
-                analyzeCalledMethod(d, callingObject);
-                d.findAll(Expression.class).forEach(c -> System.out.println("\tCall: " + c));
+                ArrayList<String> modifiedFields = new ArrayList<String>();
+                ArrayList<String> returnedFields = new ArrayList<String>();
+                ArrayList<String> retrievedFields = new ArrayList<String>();
+                analyzeCalledMethod(methDeclaration, callingObject, modifiedFields, returnedFields, retrievedFields);
+                methDeclaration.findAll(Expression.class).forEach(c -> System.out.println("\tCall: " + c));
+                methDeclaration.findAll(MethodCallExpr.class).forEach(c -> handleInnerMethodExpression(c, callingObject, modifiedFields, returnedFields, retrievedFields));
+                
+                System.out.println("\tModified Fields: " + modifiedFields.toString());
+        		System.out.println("\tReturned Fields: " + returnedFields.toString());
+        		System.out.println("\tRetrieved Fields: " + retrievedFields.toString());
+        		
+        		//identify method type
+                boolean[] isPotentialAccessor = new boolean[2];
+                boolean isGet = false;
+                boolean isInternalProducer = false;
+        		isPotentialAccessor = isPotentialAccessorMethod(methDeclaration);
+//        		if (isMutator) {
+        		if (modifiedFields.size() > 0) {
+                    System.out.println("is Mutator!");            
+                }
+                else if (isPotentialAccessor[0] == isPotentialGet && returnedFields.size() == 1) {
+                	isGet = true;
+                	System.out.println("is Get!"); 
+                }
+                else if (isPotentialAccessor[1] == isPotentialInternalProducer && returnedFields.size() == 0 && retrievedFields.size() > 1) {
+                	isInternalProducer = true;
+                	System.out.println("is Internal Producer!"); 
+                }
             } else {
                 // I don't know if this will ever happen
                 System.out.println("WARN: strange method found: " + declaration);
