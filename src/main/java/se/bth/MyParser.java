@@ -99,12 +99,11 @@ public class MyParser {
                                         .forEach(c -> this.processMethod((MethodDeclaration) c));
     }
     
-//    public ArrayList<String> collectAllClassFields() {
-//        ArrayList<String> fieldsList = new ArrayList<String>();
-//        getNodes(this.allCus, FieldDeclaration.class).stream()
-//                                    .forEach(c -> this.processField((FieldDeclaration) c, fieldsList));
-//        return fieldsList;
-//    }
+    private List<Node> getNodes(List<CompilationUnit> cus, Class nodeClass) {
+        List<Node> res = new LinkedList<Node>();
+        cus.forEach(cu -> res.addAll(cu.findAll(nodeClass)));
+        return res;
+    }
 
     private void processMethod(MethodDeclaration method) {
 
@@ -132,350 +131,7 @@ public class MyParser {
             System.out.println("Number of Asserts: " + assertCount);
         }
     }
-
-//    private void processField (FieldDeclaration field, ArrayList<String> fieldsList) {
-//    	for (VariableDeclarator varDeclarator: field.getVariables()) {
-//    		String varName = varDeclarator.getNameAsString();
-//    		Expression initializer = varDeclarator.getInitializer().get();
-//    		if (initializer instanceof ObjectCreationExpr) {
-//    			ObjectCreationExpr constructorCall = (ObjectCreationExpr) initializer;
-//                ResolvedConstructorDeclaration declaration = constructorCall.resolve();
-//                String classVar = declaration.getQualifiedName().substring(0, declaration.getQualifiedName().lastIndexOf(".")) + "." + varName;
-//                System.out.println("\tClass variable: " + classVar);
-//                fieldsList.add(classVar);
-//    		}
-//    	}
-////    	for (VariableDeclarator var: field.getVariables()) {
-////    		//Print the field's class type
-////	        System.out.println(var.getType());
-////	        //Print the field's name
-////	        System.out.println(var.getName());
-////	        //Print the field's init value, if not null
-////	        var.getInitializer().ifPresent(initValue -> System.out.println(initValue.toString()));
-////	        fieldsList.add(var);
-////    	}
-//    }
     
-    private String getObjectField (FieldAccessExpr expr, String callingObject) {
-    	String fieldAccess = null;       	        	
-        Expression scope = expr.getScope();
-        if (scope instanceof ThisExpr) {
-            ThisExpr thisExpr = (ThisExpr) scope;
-            ResolvedTypeDeclaration type = thisExpr.resolve();
-            fieldAccess = type.getQualifiedName() + "." + callingObject + "." + expr.getNameAsString();
-            System.out.println("\tField Access: " + fieldAccess);
-        } else if (scope instanceof NameExpr) {
-            NameExpr nameExpr = (NameExpr) scope;
-            ResolvedValueDeclaration value = nameExpr.resolve();
-            ResolvedReferenceType type = value.getType().asReferenceType();
-            fieldAccess = type.getQualifiedName() + "." + value.getName() + "." + callingObject + "."
-            			+ expr.getNameAsString();
-            System.out.println("\tField Access: " + fieldAccess);
-        } else {
-            throw new RuntimeException("Unknown instance for: " + scope);
-        }
-        return fieldAccess;
-    }
-    
-    private String getClassField (NameExpr expr, String callingObject) {
-    	String classField = null;
-        ResolvedValueDeclaration value = expr.resolve();
-        if (value.isField()) {
-            ResolvedFieldDeclaration field = (ResolvedFieldDeclaration) value;
-            ResolvedTypeDeclaration type = field.declaringType();
-            classField = type.getQualifiedName() + "." + callingObject + "." + field.getName();
-            System.out.println("\tClass field: " + classField);
-        }
-        return classField;
-    }
-    private void analyzeCalledConstructor(ConstructorDeclaration constrDeclaration, String initializedObj, ArrayList<String> initializedFields) {
-        // check all field accesses
-    	for (FieldAccessExpr expr: constrDeclaration.findAll(FieldAccessExpr.class)) {
-    		String fieldAccess = getObjectField(expr, initializedObj);
-    		updateFieldsAccessListByCalledMethod(expr, fieldAccess, initializedFields, null, null);        	
-        }
-            
-    	// check for fields which are accessed simply by name
-    	for (NameExpr expr: constrDeclaration.findAll(NameExpr.class)) {
-    		String classField = getClassField(expr, initializedObj); 
-    		updateFieldsAccessListByCalledMethod(expr, classField, initializedFields, null, null);
-    	}
-    }
-//    private void analyzeConstructor(ConstructorDeclaration constrDeclaration, String initializedObj, ArrayList<String> initializedFields) {
-//        analyzeCalledConstructor(constrDeclaration, initializedObj, initializedFields); // TODO: not sure how it works when replacing callingObj with initializedObj
-//        constrDeclaration.findAll(Expression.class).forEach(c -> System.out.println("\tCall: " + c));
-//        constrDeclaration.findAll(MethodCallExpr.class).forEach(c -> handleInnerMethodExpression(c, initializedObj, initializedFields, null, null));
-//        
-//        System.out.println("\tInitialized Fields: " + initializedFields.toString());    	
-//    }
-    
-    private void handleInnerConstructorCallInConstructor(ObjectCreationExpr constrDeclaration, ArrayList<String> initializedFields) {
-    	
-    }
-    
-    private void handleVariableDeclarationExpression(VariableDeclarationExpr expr) {
-    	for (VariableDeclarator varDeclarator: expr.findAll(VariableDeclarator.class)) {
-    		String varName = varDeclarator.getNameAsString();
-    		Expression initializer = varDeclarator.getInitializer().get();
-    		if (initializer instanceof ObjectCreationExpr) {
-    			ObjectCreationExpr constructorCall = (ObjectCreationExpr) initializer;
-                ResolvedConstructorDeclaration declaration = constructorCall.resolve();
-                String initializedObj = declaration.getQualifiedName().substring(0, declaration.getQualifiedName().lastIndexOf(".")) + "." + varName;
-                System.out.println("\tInitialized object: " + initializedObj);
-                
-                if (declaration instanceof JavaParserConstructorDeclaration) {
-                    ConstructorDeclaration constrDeclaration = ((JavaParserConstructorDeclaration) declaration).getWrappedNode();
-                	System.out.println("Lines: " + constrDeclaration.getRange());
-                    ArrayList<String> initializedFields = new ArrayList<String>();
-                    analyzeCalledConstructor(constrDeclaration, varName, initializedFields); // TODO: not sure how it works when replacing callingObj with initializedObj
-                    constrDeclaration.findAll(Expression.class).forEach(c -> System.out.println("\tExpr: " + c));
-                    constrDeclaration.findAll(MethodCallExpr.class).forEach(c -> handleInnerMethodExpression(c, varName, initializedFields, null, null));
-                    constrDeclaration.findAll(ObjectCreationExpr.class).forEach(c -> handleInnerConstructorCallInConstructor(c, initializedFields));constrDeclaration.findAll(Expression.class).forEach(c -> System.out.println("\tCall: " + c));
-                    
-                    System.out.println("\tInitialized Fields: " + initializedFields.toString());    	                              
-                }
-    	    }
-    	}
-    }    
-    
-    private int getFieldInteractionType (Expression originalExpr) {
-    	boolean fromReturnStmt = false;
-        Expression targetExpression = null;
-        Expression expr = null;
-        if (originalExpr.getParentNode().isPresent()) {
-        	System.out.println("\tparentNode: " + originalExpr.getParentNode().toString());
-        	Node parentNode = originalExpr.getParentNode().get();
-        	if (parentNode instanceof ReturnStmt) {
-        		expr = originalExpr;
-        		fromReturnStmt = true;
-        	}
-        	else if (parentNode instanceof Expression) {
-        		expr = (Expression) parentNode;
-        	}
-        	
-//        		Expression parentExpr = (Expression) parentNode;
-            if (expr instanceof UnaryExpr) {
-            	targetExpression = ((UnaryExpr) expr).getExpression();
-            	if(originalExpr.equals(targetExpression)) {
-            		if (fromReturnStmt)
-            			return isModifiedNReturned;
-            		else
-            			return isModifiedOnly;
-            	}            		
-            } else if (expr instanceof AssignExpr) {
-                targetExpression = ((AssignExpr) expr).getTarget();
-                if (originalExpr.equals(targetExpression))
-                	return isModifiedOnly;
-            }
-            if (fromReturnStmt) {
-            	return isReturnedOnly; //meaning simple return statement like "return attrA;"
-            }    
-//            else
-//            	return isRetrievedOnly; // meaning without returning, i.e., used by internal producer method
-        }
-        return undentifiedFieldInteractionType;
-    }
-
-    private void updateFieldsAccessListByCalledMethod(Expression expr, String fieldAccess, ArrayList<String> modifiedFields, ArrayList<String> returnedFields, ArrayList<String> retrievedFields)
-    {
-//    	boolean isMutator = false;
-    	int fieldInteractionType = this.getFieldInteractionType(expr);
-    	if (fieldInteractionType == isModifiedOnly || fieldInteractionType == isModifiedNReturned) {
-//    		isMutator |= true;
-    		if (!modifiedFields.contains(fieldAccess)) 
-    			modifiedFields.add(fieldAccess);
-    	}
-    	else if (fieldInteractionType == isReturnedOnly || fieldInteractionType == isModifiedNReturned) {
-    		if (returnedFields != null && !returnedFields.contains(fieldAccess)) 
-    			returnedFields.add(fieldAccess);
-    	}
-    	if (retrievedFields != null && !retrievedFields.contains(fieldAccess)) 
-			retrievedFields.add(fieldAccess);
-    	
-//    	return isMutator;
-    }
-    
-    private boolean[] isPotentialAccessorMethod (MethodDeclaration method) {
-    	int numStmts = 0;
-        boolean hasReturnStmt = false;
-        boolean[] returnValues = new boolean[2];
-        for (Statement stmt: method.findAll(Statement.class)) {
-        	numStmts++;
-        	if (stmt.isReturnStmt()) {
-        		hasReturnStmt = true;
-        	}
-        }
-        if (numStmts == 2 && hasReturnStmt) //1st stmt is the block stmt of the method
-        	returnValues[0] = isPotentialGet;
-        if (hasReturnStmt)
-        	returnValues[1] = isPotentialInternalProducer;
-        
-        return returnValues;
-    }
-    
-    
-    private void analyzeCalledMethod(MethodDeclaration method, String callingObject, 
-    	ArrayList<String> modifiedFields, ArrayList<String> returnedFields, ArrayList<String> retrievedFields) {
-    	
-//        boolean isMutator = false;
-//        boolean isGet = false;
-//        boolean isInternalProducer = false;
-//        boolean[] isPotentialAccessor = new boolean[2];
-        
-        // check all field accesses
-        for (FieldAccessExpr expr: method.findAll(FieldAccessExpr.class)) {
-        	String fieldAccess = getObjectField(expr, callingObject);
-//        	String fieldAccess = null;       	        	
-//            Expression scope = expr.getScope();
-//            if (scope instanceof ThisExpr) {
-//                ThisExpr thisExpr = (ThisExpr) scope;
-//                ResolvedTypeDeclaration type = thisExpr.resolve();
-//                fieldAccess = type.getQualifiedName() + "." + callingObject + "." + expr.getNameAsString();
-//                System.out.println("\tField Access: " + fieldAccess);
-//            } else if (scope instanceof NameExpr) {
-//                NameExpr nameExpr = (NameExpr) scope;
-//                ResolvedValueDeclaration value = nameExpr.resolve();
-//                ResolvedReferenceType type = value.getType().asReferenceType();
-//                fieldAccess = type.getQualifiedName() + "." + value.getName() + "." + callingObject + "."
-//                			+ expr.getNameAsString();
-//                System.out.println("\tField Access: " + fieldAccess);
-//            } else {
-//                throw new RuntimeException("Unknown instance for: " + scope);
-//            }
-
-            updateFieldsAccessListByCalledMethod(expr, fieldAccess, modifiedFields, returnedFields, retrievedFields);        	
-        }
-        
-        // check for fields which are accessed simply by name
-        for (NameExpr expr: method.findAll(NameExpr.class)) {
-        	String classField = getClassField(expr, callingObject); 
-        	updateFieldsAccessListByCalledMethod(expr, classField, modifiedFields, returnedFields, retrievedFields);
-    		
-//        	String classField = null;
-//            ResolvedValueDeclaration value = expr.resolve();
-//            if (value.isField()) {
-//                ResolvedFieldDeclaration field = (ResolvedFieldDeclaration) value;
-//                ResolvedTypeDeclaration type = field.declaringType();
-//                classField = type.getQualifiedName() + "." + callingObject + "." + field.getName();
-//                System.out.println("\tClass field: " + classField);
-//
-//                updateFieldsAccessListByCalledMethod(expr, classField, modifiedFields, returnedFields, retrievedFields);
-//            }
-        }
-
-//		System.out.println("\tModified Fields: " + modifiedFields.toString());
-//		System.out.println("\tReturned Fields: " + returnedFields.toString());
-//		System.out.println("\tRetrieved Fields: " + retrievedFields.toString());
-//		
-//		//identify method type
-//		isPotentialAccessor = isPotentialAccessorMethod(method);
-////		if (isMutator) {
-//		if (modifiedFields.size() > 0) {
-//            System.out.println("is Mutator!");            
-//        }
-//        else if (isPotentialAccessor[0] == isPotentialGet && returnedFields.size() == 1) {
-//        	isGet = true;
-//        	System.out.println("is Get!"); 
-//        }
-//        else if (isPotentialAccessor[0] == isPotentialInternalProducer && returnedFields.size() == 0 && retrievedFields.size() > 1) {
-//        	isInternalProducer = true;
-//        	System.out.println("is Internal Producer!"); 
-//        }
-    }
-    
-    private void analyzeInnerCalledMethod(MethodDeclaration method, String callingObject, 
-    	ArrayList<String> modifiedFields, ArrayList<String> returnedFields, ArrayList<String> retrievedFields) {
-    	
-        boolean isGet = false;
-        boolean isInternalProducer = false;
-        boolean[] isPotentialAccessor = new boolean[2];
-    	
-        // check all field accesses
-        for (FieldAccessExpr expr: method.findAll(FieldAccessExpr.class)) {
-        	String fieldAccess = getObjectField(expr, callingObject);
-//        	String fieldAccess = null;       	        	
-//            Expression scope = expr.getScope();
-//            if (scope instanceof ThisExpr) {
-//                ThisExpr thisExpr = (ThisExpr) scope;
-//                ResolvedTypeDeclaration type = thisExpr.resolve();
-//                fieldAccess = type.getQualifiedName() + "." + callingObject + "." + expr.getNameAsString();
-//                System.out.println("\tField Access: " + fieldAccess);
-//            } else if (scope instanceof NameExpr) {
-//                NameExpr nameExpr = (NameExpr) scope;
-//                ResolvedValueDeclaration value = nameExpr.resolve();
-//                ResolvedReferenceType type = value.getType().asReferenceType();
-//                fieldAccess = type.getQualifiedName() + "." + value.getName() + "." + callingObject + "."
-//                			+ expr.getNameAsString();
-//                System.out.println("\tField Access: " + fieldAccess);
-//            } else {
-//                throw new RuntimeException("Unknown instance for: " + scope);
-//            }
-
-            updateFieldsAccessListByCalledMethod(expr, fieldAccess, modifiedFields, returnedFields, retrievedFields);
-        }
-        
-        // check for fields which are accessed simply by name
-        for (NameExpr expr: method.findAll(NameExpr.class)) {
-        	String classField = getClassField(expr, callingObject); 
-        	updateFieldsAccessListByCalledMethod(expr, classField, modifiedFields, returnedFields, retrievedFields);
-    		
-//        	String classField = null;
-//            ResolvedValueDeclaration value = expr.resolve();
-//            if (value.isField()) {
-//                ResolvedFieldDeclaration field = (ResolvedFieldDeclaration) value;
-//                ResolvedTypeDeclaration type = field.declaringType();
-//                classField = type.getQualifiedName() + "." + callingObject + "." + field.getName();
-//                System.out.println("\tClass field: " + classField);
-//
-//                updateFieldsAccessListByCalledMethod(expr, classField, modifiedFields, returnedFields, retrievedFields);
-//            }
-        }
-
-        if (modifiedFields != null)
-        	System.out.println("\tModified Fields: " + modifiedFields.toString());
-        if (returnedFields != null)
-    		System.out.println("\tReturned Fields: " + returnedFields.toString());
-        if (retrievedFields  != null)
-    		System.out.println("\tRetrieved Fields: " + retrievedFields.toString());
-    		
-    		//identify method type
-    		isPotentialAccessor = isPotentialAccessorMethod(method);
-    		if (modifiedFields != null && modifiedFields.size() > 0) {
-                System.out.println("\tInner method is Mutator!");            
-            }
-            else if (isPotentialAccessor[0] == isPotentialGet && returnedFields != null && returnedFields.size() == 1) {
-            	isGet = true;
-            	System.out.println("\tInner method is Get!"); 
-            }
-            else if (isPotentialAccessor[1] == isPotentialInternalProducer && retrievedFields  != null && returnedFields != null && returnedFields.size() == 0 && retrievedFields.size() > 1) {
-            	isInternalProducer = true;
-            	System.out.println("\tInner method is Internal Producer!"); 
-            }		
-    }
-
-    private void handleInnerMethodExpression(MethodCallExpr call, String callingObject, 
-        	ArrayList<String> modifiedFields, ArrayList<String> returnedFields, ArrayList<String> retrievedFields) {
-        System.out.println("Inner Call: " + call.getNameAsString());
-        try {
-            ResolvedMethodDeclaration declaration = call.resolve();
-            if (declaration instanceof JavaParserMethodDeclaration) {
-                MethodDeclaration d = ((JavaParserMethodDeclaration) declaration).getWrappedNode();
-                System.out.println("Inner Lines: " + d.getRange());
-                // get calling object name
-//                if (call.getScope().isPresent())
-//                	callingObject = call.getScope().get().toString();                	
-                analyzeInnerCalledMethod(d, callingObject, modifiedFields, returnedFields, retrievedFields);
-                d.findAll(Expression.class).forEach(c -> System.out.println("\tInner Call: " + c));
-                d.findAll(MethodCallExpr.class).forEach(c -> handleInnerMethodExpression(c, callingObject, modifiedFields, returnedFields, retrievedFields));
-            } else {
-                // I don't know if this will ever happen
-                System.out.println("WARN: strange method found: " + declaration);
-            }
-        } catch(UnsolvedSymbolException e){
-            System.out.println(e.getName()); 
-        }
-    }
-
     private boolean handleMethodExpression(MethodCallExpr call) {
         boolean isAssert = false;
         System.out.println("Call: " + call.getNameAsString());
@@ -534,12 +190,234 @@ public class MyParser {
 
         return isAssert;
     }
-
-    private List<Node> getNodes(List<CompilationUnit> cus, Class nodeClass) {
-        List<Node> res = new LinkedList<Node>();
-        cus.forEach(cu -> res.addAll(cu.findAll(nodeClass)));
-        return res;
+    
+    private void analyzeCalledMethod(MethodDeclaration method, String callingObject, 
+        ArrayList<String> modifiedFields, ArrayList<String> returnedFields, ArrayList<String> retrievedFields) {
+            
+    	// check all field accesses
+    	for (FieldAccessExpr expr: method.findAll(FieldAccessExpr.class)) {
+    		String fieldAccess = getObjectField(expr, callingObject);
+    		
+    		updateFieldsAccessListByCalledMethod(expr, fieldAccess, modifiedFields, returnedFields, retrievedFields);        	
+    	}
+            
+    	// check for fields which are accessed simply by name
+    	for (NameExpr expr: method.findAll(NameExpr.class)) {
+    		String classField = getClassField(expr, callingObject); 
+    		updateFieldsAccessListByCalledMethod(expr, classField, modifiedFields, returnedFields, retrievedFields);
+        }
     }
+    
+    private String getObjectField (FieldAccessExpr expr, String callingObject) {
+    	String fieldAccess = null;       	        	
+        Expression scope = expr.getScope();
+        if (scope instanceof ThisExpr) {
+            ThisExpr thisExpr = (ThisExpr) scope;
+            ResolvedTypeDeclaration type = thisExpr.resolve();
+            fieldAccess = type.getQualifiedName() + "." + callingObject + "." + expr.getNameAsString();
+            System.out.println("\tField Access: " + fieldAccess);
+        } else if (scope instanceof NameExpr) {
+            NameExpr nameExpr = (NameExpr) scope;
+            ResolvedValueDeclaration value = nameExpr.resolve();
+            ResolvedReferenceType type = value.getType().asReferenceType();
+            fieldAccess = type.getQualifiedName() + "." + value.getName() + "." + callingObject + "."
+            			+ expr.getNameAsString();
+            System.out.println("\tField Access: " + fieldAccess);
+        } else {
+            throw new RuntimeException("Unknown instance for: " + scope);
+        }
+        return fieldAccess;
+    }
+    
+    private String getClassField (NameExpr expr, String callingObject) {
+    	String classField = null;
+        ResolvedValueDeclaration value = expr.resolve();
+        if (value.isField()) {
+            ResolvedFieldDeclaration field = (ResolvedFieldDeclaration) value;
+            ResolvedTypeDeclaration type = field.declaringType();
+            classField = type.getQualifiedName() + "." + callingObject + "." + field.getName();
+            System.out.println("\tClass field: " + classField);
+        }
+        return classField;
+    }
+    
+    private void updateFieldsAccessListByCalledMethod(Expression expr, String fieldAccess, ArrayList<String> modifiedFields, ArrayList<String> returnedFields, ArrayList<String> retrievedFields)
+    {
+    	int fieldInteractionType = this.getFieldInteractionType(expr);
+    	if (fieldInteractionType == isModifiedOnly || fieldInteractionType == isModifiedNReturned) {
+    		if (!modifiedFields.contains(fieldAccess)) 
+    			modifiedFields.add(fieldAccess);
+    	}
+    	else if (fieldInteractionType == isReturnedOnly || fieldInteractionType == isModifiedNReturned) {
+    		if (returnedFields != null && !returnedFields.contains(fieldAccess)) 
+    			returnedFields.add(fieldAccess);
+    	}
+    	if (retrievedFields != null && !retrievedFields.contains(fieldAccess)) 
+			retrievedFields.add(fieldAccess);
+    }
+    
+    private int getFieldInteractionType (Expression originalExpr) {
+    	boolean fromReturnStmt = false;
+        Expression targetExpression = null;
+        Expression expr = null;
+        if (originalExpr.getParentNode().isPresent()) {
+        	System.out.println("\tparentNode: " + originalExpr.getParentNode().toString());
+        	Node parentNode = originalExpr.getParentNode().get();
+        	if (parentNode instanceof ReturnStmt) {
+        		expr = originalExpr;
+        		fromReturnStmt = true;
+        	}
+        	else if (parentNode instanceof Expression) {
+        		expr = (Expression) parentNode;
+        	}
+        	
+//        		Expression parentExpr = (Expression) parentNode;
+            if (expr instanceof UnaryExpr) {
+            	targetExpression = ((UnaryExpr) expr).getExpression();
+            	if(originalExpr.equals(targetExpression)) {
+            		if (fromReturnStmt)
+            			return isModifiedNReturned;
+            		else
+            			return isModifiedOnly;
+            	}            		
+            } else if (expr instanceof AssignExpr) {
+                targetExpression = ((AssignExpr) expr).getTarget();
+                if (originalExpr.equals(targetExpression))
+                	return isModifiedOnly;
+            }
+            if (fromReturnStmt) {
+            	return isReturnedOnly; //meaning simple return statement like "return attrA;"
+            }    
+//            else
+//            	return isRetrievedOnly; // meaning without returning, i.e., used by internal producer method
+        }
+        return undentifiedFieldInteractionType;
+    }
+    
+    private boolean[] isPotentialAccessorMethod (MethodDeclaration method) {
+    	int numStmts = 0;
+        boolean hasReturnStmt = false;
+        boolean[] returnValues = new boolean[2];
+        for (Statement stmt: method.findAll(Statement.class)) {
+        	numStmts++;
+        	if (stmt.isReturnStmt()) {
+        		hasReturnStmt = true;
+        	}
+        }
+        if (numStmts == 2 && hasReturnStmt) //1st stmt is the block stmt of the method
+        	returnValues[0] = isPotentialGet;
+        if (hasReturnStmt)
+        	returnValues[1] = isPotentialInternalProducer;
+        
+        return returnValues;
+    }
+    
+    private void handleInnerMethodExpression(MethodCallExpr call, String callingObject, 
+        	ArrayList<String> modifiedFields, ArrayList<String> returnedFields, ArrayList<String> retrievedFields) {
+        System.out.println("Inner Call: " + call.getNameAsString());
+        try {
+            ResolvedMethodDeclaration declaration = call.resolve();
+            if (declaration instanceof JavaParserMethodDeclaration) {
+                MethodDeclaration d = ((JavaParserMethodDeclaration) declaration).getWrappedNode();
+                System.out.println("Inner Lines: " + d.getRange());
+                // get calling object name
+//                if (call.getScope().isPresent())
+//                	callingObject = call.getScope().get().toString();                	
+                analyzeInnerCalledMethod(d, callingObject, modifiedFields, returnedFields, retrievedFields);
+                d.findAll(Expression.class).forEach(c -> System.out.println("\tInner Call: " + c));
+                d.findAll(MethodCallExpr.class).forEach(c -> handleInnerMethodExpression(c, callingObject, modifiedFields, returnedFields, retrievedFields));
+            } else {
+                // I don't know if this will ever happen
+                System.out.println("WARN: strange method found: " + declaration);
+            }
+        } catch(UnsolvedSymbolException e){
+            System.out.println(e.getName()); 
+        }
+    }
+    
+    private void analyzeInnerCalledMethod(MethodDeclaration method, String callingObject, 
+        ArrayList<String> modifiedFields, ArrayList<String> returnedFields, ArrayList<String> retrievedFields) {
+    	
+    	boolean isGet = false;
+    	boolean isInternalProducer = false;
+    	boolean[] isPotentialAccessor = new boolean[2];
+        	
+    	// check all field accesses
+    	for (FieldAccessExpr expr: method.findAll(FieldAccessExpr.class)) {
+    		String fieldAccess = getObjectField(expr, callingObject);
+    		updateFieldsAccessListByCalledMethod(expr, fieldAccess, modifiedFields, returnedFields, retrievedFields);
+        }
+    	
+    	// check for fields which are accessed simply by name
+    	for (NameExpr expr: method.findAll(NameExpr.class)) {
+    		String classField = getClassField(expr, callingObject); 
+    		updateFieldsAccessListByCalledMethod(expr, classField, modifiedFields, returnedFields, retrievedFields);
+        }
+
+    	if (modifiedFields != null)
+    		System.out.println("\tModified Fields: " + modifiedFields.toString());
+        if (returnedFields != null)
+        	System.out.println("\tReturned Fields: " + returnedFields.toString());
+        if (retrievedFields  != null)
+        	System.out.println("\tRetrieved Fields: " + retrievedFields.toString());
+        		
+        //identify method type
+        isPotentialAccessor = isPotentialAccessorMethod(method);
+        if (modifiedFields != null && modifiedFields.size() > 0) {
+        	System.out.println("\tInner method is Mutator!");            
+        }
+        else if (isPotentialAccessor[0] == isPotentialGet && returnedFields != null && returnedFields.size() == 1) {
+        	isGet = true;
+        	System.out.println("\tInner method is Get!"); 
+        }
+        else if (isPotentialAccessor[1] == isPotentialInternalProducer && retrievedFields  != null && returnedFields != null && returnedFields.size() == 0 && retrievedFields.size() > 1) {
+        	isInternalProducer = true;
+        	System.out.println("\tInner method is Internal Producer!"); 
+        }		
+    }
+    
+    private void handleVariableDeclarationExpression(VariableDeclarationExpr expr) {
+    	for (VariableDeclarator varDeclarator: expr.findAll(VariableDeclarator.class)) {
+    		String varName = varDeclarator.getNameAsString();
+    		Expression initializer = varDeclarator.getInitializer().get();
+    		if (initializer instanceof ObjectCreationExpr) {
+    			ObjectCreationExpr constructorCall = (ObjectCreationExpr) initializer;
+                ResolvedConstructorDeclaration declaration = constructorCall.resolve();
+                String initializedObj = declaration.getQualifiedName().substring(0, declaration.getQualifiedName().lastIndexOf(".")) + "." + varName;
+                System.out.println("\tInitialized object: " + initializedObj);
+                
+                if (declaration instanceof JavaParserConstructorDeclaration) {
+                    ConstructorDeclaration constrDeclaration = ((JavaParserConstructorDeclaration) declaration).getWrappedNode();
+                	System.out.println("Lines: " + constrDeclaration.getRange());
+                    ArrayList<String> initializedFields = new ArrayList<String>();
+                    analyzeCalledConstructor(constrDeclaration, varName, initializedFields); // TODO: not sure how it works when replacing callingObj with initializedObj
+                    constrDeclaration.findAll(Expression.class).forEach(c -> System.out.println("\tExpr: " + c));
+                    constrDeclaration.findAll(MethodCallExpr.class).forEach(c -> handleInnerMethodExpression(c, varName, initializedFields, null, null));
+                    constrDeclaration.findAll(ObjectCreationExpr.class).forEach(c -> handleInnerConstructorCallInConstructor(c, initializedFields));constrDeclaration.findAll(Expression.class).forEach(c -> System.out.println("\tCall: " + c));
+                    
+                    System.out.println("\tInitialized Fields: " + initializedFields.toString());    	                              
+                }
+    	    }
+    	}
+    }  
+    
+    private void analyzeCalledConstructor(ConstructorDeclaration constrDeclaration, String initializedObj, ArrayList<String> initializedFields) {
+        // check all field accesses
+    	for (FieldAccessExpr expr: constrDeclaration.findAll(FieldAccessExpr.class)) {
+    		String fieldAccess = getObjectField(expr, initializedObj);
+    		updateFieldsAccessListByCalledMethod(expr, fieldAccess, initializedFields, null, null);        	
+        }
+            
+    	// check for fields which are accessed simply by name
+    	for (NameExpr expr: constrDeclaration.findAll(NameExpr.class)) {
+    		String classField = getClassField(expr, initializedObj); 
+    		updateFieldsAccessListByCalledMethod(expr, classField, initializedFields, null, null);
+    	}
+    }
+    
+    private void handleInnerConstructorCallInConstructor(ObjectCreationExpr constrDeclaration, ArrayList<String> initializedFields) {
+    	
+    }              
 }
 
 
