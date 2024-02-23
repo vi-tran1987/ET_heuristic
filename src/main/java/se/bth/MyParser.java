@@ -4,6 +4,7 @@ import java.io.File;
 import java.util.List;
 import java.util.Optional;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedList;
 
 import java.io.IOException;
@@ -54,6 +55,7 @@ import com.github.javaparser.symbolsolver.JavaSymbolSolver;
 import com.github.javaparser.symbolsolver.javaparsermodel.declarations.JavaParserClassDeclaration;
 import com.github.javaparser.symbolsolver.javaparsermodel.declarations.JavaParserConstructorDeclaration;
 import com.github.javaparser.symbolsolver.javaparsermodel.declarations.JavaParserMethodDeclaration;
+import com.github.javaparser.symbolsolver.javaparsermodel.declarations.JavaParserVariableDeclaration;
 import com.github.javaparser.symbolsolver.resolution.typesolvers.CombinedTypeSolver;
 import com.github.javaparser.symbolsolver.resolution.typesolvers.ReflectionTypeSolver;
 import com.github.javaparser.symbolsolver.resolution.typesolvers.JavaParserTypeSolver;
@@ -116,15 +118,16 @@ public class MyParser {
         if (method.getAnnotationByName("Test").isPresent()) {
             System.out.println(method.getNameAsString());
             ArrayList<MethodCall> methodCalls = new ArrayList<MethodCall>();
+            int methCallID = 0;
 //            ArrayList<MethodCallExpr> analysedMethodCallExprs = new ArrayList<MethodCallExpr>(); //might need to use it later to avoid double work
            
             for (Expression expr: method.findAll(Expression.class)) {
             	if (expr instanceof VariableDeclarationExpr) {
             		ArrayList<MethodCall> mCalls = handleVariableDeclarationExpression((VariableDeclarationExpr) expr);
-            		MethodCall.addMultipleNewMethodCall(methodCalls, mCalls);
+            		MethodCall.addMultipleNewMethodCall(methodCalls, mCalls, methCallID);
                 }
             	else if (expr instanceof MethodCallExpr) { //&& !analysedMethodCallExprs.contains(expr)            		
-                	MethodCall methCall = handleMethodExpression((MethodCallExpr) expr);                	
+                	MethodCall methCall = handleMethodExpression((MethodCallExpr) expr, methodCalls);                	
                 	MethodCall.addNewMethodCall(methodCalls, methCall);
                 } 
                 else if (expr instanceof AssignExpr) {
@@ -137,17 +140,19 @@ public class MyParser {
                 // TODO: think if other expression types are important here as well
             }
             
-            int count = 0;
+//            int count = 0;
             for (MethodCall c : methodCalls) {
-            	c.setId(count);
-            	count++;
+//            	c.setId(count);
+//            	count++;
             	
             	if (c.isAssertStmt()) {
             		System.out.println("ID: " + c.getId() + " ----- Assert statement: " + c.getMethodCallName());
+                	System.out.println("\tPosition: " + c.getPosition()); 
                 	System.out.println("\tVerified info: " + c.getVerifiedInfo()); 
             	}
             	else {
             		System.out.println("ID: " + c.getId() + " ----- Method call: " + c.getMethodCallName() + " ----- " + c.getMethodType());
+                	System.out.println("\tPosition: " + c.getPosition()); 
                 	System.out.println("\tRetrieved fields: " + c.getRetrievedFields());
                 	System.out.println("\tModified fields: " + c.getModifiedFields());
                 	System.out.println("\tReturned fields: " + c.getReturnedFields());
@@ -155,36 +160,26 @@ public class MyParser {
             	}            	          		
             	System.out.println("--------------------------------------------------");
             }
+            // update verified info of the assert stmts: adding the verified method calls
+            
+            
             // check if the test case is an Eager Test or not
             
 //            System.out.println("Number of Asserts: " + assertCount);
         }
     }
     
-    private boolean isEagerTest() {
-    	boolean isEager = false;
-    	
-    	
-    	return isEager;
-    }
-    
-    private void combineVerifiedInfoFromAllAssertStatements (ArrayList<MethodCall> allMethCalls, ArrayList<MethodCall> assertStmts) {
-    	for (MethodCall assertStmt : assertStmts) {
-    		ArrayList<MethodCall> methCallsBeforeAssertStmt = MethodCall.getMethodCallBeforeID(assertStmt.getId(), allMethCalls);
-    		for (String verifiedInfo : assertStmt.getVerifiedInfo()) {
-    			for (int i = methCallsBeforeAssertStmt.size()-1; i < 0; i--) {
-    				MethodCall mCall = methCallsBeforeAssertStmt.get(i);
-    				
-    			}
-    		}
-    	}
-    }
-    
-    private boolean isFromMethodCall(MethodCall methCall, String verifiedInfo) {
-    	boolean returnVal = false;
-    	
-    	return returnVal;
-    }
+//    private void combineVerifiedInfoFromAllAssertStatements (ArrayList<MethodCall> allMethCalls, ArrayList<MethodCall> assertStmts) {
+//    	for (MethodCall assertStmt : assertStmts) {
+//    		ArrayList<MethodCall> methCallsBeforeAssertStmt = MethodCall.getMethodCallBeforeID(assertStmt.getId(), allMethCalls);
+//    		for (String verifiedInfo : assertStmt.getVerifiedInfo()) {
+//    			for (int i = methCallsBeforeAssertStmt.size()-1; i < 0; i--) {
+//    				MethodCall mCall = methCallsBeforeAssertStmt.get(i);
+//    				
+//    			}
+//    		}
+//    	}
+//    }
         
     private MethodCall handleAssignExpr(AssignExpr expr) {
     	MethodCall methCall = new MethodCall();
@@ -192,7 +187,7 @@ public class MyParser {
         Expression targetExpr = expr.getTarget();
         String targetVar = targetExpr.toString();
         if (valueExpr instanceof MethodCallExpr) {
-			methCall = handleMethodExpression((MethodCallExpr) valueExpr);    			
+			methCall = handleMethodExpression((MethodCallExpr) valueExpr, null);    			
 			methCall.setReturnedValue(targetVar);
 			System.out.println("\tReturn value: " + methCall.getReturnedValue());
 		} 
@@ -209,10 +204,7 @@ public class MyParser {
     		Expression initializer = varDeclarator.getInitializer().get();
     		
     		if (initializer instanceof MethodCallExpr) {
-//              if (handleMethodExpression((MethodCallExpr) expr)) {
-//                  assertCount++;
-//              }
-    			MethodCall methCall = handleMethodExpression((MethodCallExpr) initializer);    			
+    			MethodCall methCall = handleMethodExpression((MethodCallExpr) initializer, null);    			
     			methCall.setReturnedValue(varName);
     			System.out.println("\tReturn value: " + methCall.getReturnedValue());
     			MethodCall.addNewMethodCall(methodCalls, methCall);
@@ -225,9 +217,10 @@ public class MyParser {
     	return methodCalls;
     }  
     
-    private MethodCall handleMethodExpression(MethodCallExpr call) {
+    private MethodCall handleMethodExpression(MethodCallExpr call, ArrayList<MethodCall> methodCalls) {
         MethodCall methCall = new MethodCall();
         methCall.setMethodCallName(call.getTokenRange().get().toString());
+        methCall.setPosition(getExpressionPosition(call));
         System.out.println("Call: " + methCall.getMethodCallName());
         boolean isFromSuperConstructor = false;
         try {
@@ -290,7 +283,7 @@ public class MyParser {
                 // TODO: check what the assert statement checks
 //                isAssert = true;
                 methCall.setIsAssertStmt(true);
-                ArrayList<String> verifiedInfo = handleAssertStatement(call);
+                ArrayList<VerifiedInformation> verifiedInfo = handleAssertStatement(call, methodCalls);
                 methCall.setVerifiedInfo(verifiedInfo);
                 System.out.println("Assert stmt: " + methCall.getMethodCallName() + " --- Verified Info: " + methCall.getVerifiedInfo());      	
             }
@@ -298,24 +291,24 @@ public class MyParser {
         return methCall;
     }
     
-    private ArrayList<String> handleAssertStatement(MethodCallExpr assertCall) {
+    private ArrayList<VerifiedInformation> handleAssertStatement(MethodCallExpr assertCall, ArrayList<MethodCall> methodCalls) {
     	NodeList<Expression> arguments = assertCall.getArguments();
-    	ArrayList<String> allVerifiedInfo = new ArrayList<String>();    	
-    	for (Expression argument : arguments) {
+    	ArrayList<VerifiedInformation> allVerifiedInfo = new ArrayList<VerifiedInformation>();    	
+    	for (Expression argument : arguments) { 
 			// TODO: handle argument to assertTrue(a.equals(b))
     		if (argument instanceof NameExpr) {
-    			ArrayList<String> verifiedInfo = handleArgumentfromAssertStmt(argument);
+    			ArrayList<VerifiedInformation> verifiedInfo = handleArgumentfromAssertStmt(argument, methodCalls);
     			allVerifiedInfo.addAll(verifiedInfo);
     		}
     		else if (argument instanceof MethodCallExpr) {
-    			ArrayList<String> verifiedInfo = handleArgumentfromAssertStmt(argument);
+    			ArrayList<VerifiedInformation> verifiedInfo = handleArgumentfromAssertStmt(argument, methodCalls);
     			allVerifiedInfo.addAll(verifiedInfo);
     		}
     		else if (argument instanceof BinaryExpr) {
     			BinaryExpr expr = (BinaryExpr) argument;    			
-    			ArrayList<String> verifiedInfo = handleArgumentfromAssertStmt(expr.getLeft());
+    			ArrayList<VerifiedInformation> verifiedInfo = handleArgumentfromAssertStmt(expr.getLeft(), methodCalls);
     			allVerifiedInfo.addAll(verifiedInfo);
-    			verifiedInfo = handleArgumentfromAssertStmt(expr.getRight());
+    			verifiedInfo = handleArgumentfromAssertStmt(expr.getRight(), methodCalls);
     			allVerifiedInfo.addAll(verifiedInfo);
     		}
     		else {
@@ -325,38 +318,80 @@ public class MyParser {
     	return allVerifiedInfo;
     }
     
-    private ArrayList<String> handleArgumentfromAssertStmt(Expression expr) {
-    	ArrayList<String> verifiedInfo = new ArrayList<String>();
-    	if (expr instanceof NameExpr) {
+    private ArrayList<VerifiedInformation> handleArgumentfromAssertStmt(Expression expr, ArrayList<MethodCall> methodCalls) {
+    	ArrayList<VerifiedInformation> allVerifiedInfo = new ArrayList<VerifiedInformation>();
+		
+    	if (expr instanceof NameExpr) {		
+    		VerifiedInformation verifiedInfo = new VerifiedInformation();
     		NameExpr nameExpr = (NameExpr) expr;
     		ResolvedValueDeclaration valueDeclaration = nameExpr.resolve();
+    		if (valueDeclaration instanceof JavaParserVariableDeclaration) {
+    			JavaParserVariableDeclaration jpVarDecl = (JavaParserVariableDeclaration) valueDeclaration;
+    			Expression initializerExpr = jpVarDecl.getVariableDeclarator().getInitializer().get();
+    			String methCallName = initializerExpr.getTokenRange().get().toString();
+    			verifiedInfo.setSourceMethodCallName(methCallName);
+    			String methCallPosition = getExpressionPosition(initializerExpr);
+    			verifiedInfo.setSourceMethodCallPosition(methCallPosition);
+    		}    			
     		ResolvedType type = valueDeclaration.getType();
-    		if (type instanceof ResolvedPrimitiveType)
-    			verifiedInfo.add(nameExpr.getName().getIdentifier());
+    		if (type instanceof ResolvedPrimitiveType) {
+    			verifiedInfo.setVerifiedInfo(nameExpr.getName().getIdentifier());
+    		}
     		else if (type instanceof ResolvedReferenceType) {    			
     			ResolvedReferenceType referenceType = (ResolvedReferenceType)type;    			
     			String fullObjectName = referenceType.getQualifiedName() + "." + nameExpr.getName().getIdentifier();
-    			verifiedInfo.add(fullObjectName);
+    			verifiedInfo.setVerifiedInfo(fullObjectName);
     		}
+    		verifiedInfo.setIsVerifiedMethodCallIdentified(false);
+    		allVerifiedInfo.add(verifiedInfo);
     	}
     	else if (expr instanceof MethodCallExpr) {
 			MethodCallExpr methCallExpr = (MethodCallExpr) expr;
-			MethodCall methCall = handleMethodExpression(methCallExpr);
+			MethodCall methCall = handleMethodExpression(methCallExpr, methodCalls);
+
 			String methType = methCall.getMethodType();
 			if (methType.equals(MethodCall.CREATIONAL) || methType.equals(MethodCall.MUTATOR)) {
-				verifiedInfo.addAll(methCall.getModifiedFields());
-				verifiedInfo.add(methCall.getReturnedValue());
+				for (String modifiedField : methCall.getModifiedFields()) {
+		    		VerifiedInformation verifiedInfo = new VerifiedInformation();
+					verifiedInfo.setSourceMethodCallName(methCall.getMethodCallName());
+					verifiedInfo.setSourceMethodCallPosition(methCall.getPosition());
+					verifiedInfo.setVerifiedMethodCall(methCall);
+					verifiedInfo.setVerifiedInfo(modifiedField);
+					allVerifiedInfo.add(verifiedInfo);
+				}
+				methCall.setReturnedValue("return value of " + methCall.getMethodCallName());
+				MethodCall.addNewMethodCall(methodCalls, methCall);
+				
+				VerifiedInformation verifiedInfo = new VerifiedInformation();
+				verifiedInfo.setSourceMethodCallName(methCall.getMethodCallName());
+				verifiedInfo.setSourceMethodCallPosition(methCall.getPosition());
+				verifiedInfo.setVerifiedMethodCall(methCall);
+				verifiedInfo.setVerifiedInfo(methCall.getReturnedValue());
+				allVerifiedInfo.add(verifiedInfo);
 			}
 			else if (methType.equals(MethodCall.GET) || methType.equals(MethodCall.EXTERNAL_PRODUCER)) {
-				verifiedInfo.addAll(methCall.getRetrievedFields());
+				for (String retrievedField : methCall.getRetrievedFields()) {
+					VerifiedInformation verifiedInfo = new VerifiedInformation();
+					verifiedInfo.setSourceMethodCallName(methCall.getMethodCallName());
+					verifiedInfo.setSourceMethodCallPosition(methCall.getPosition());
+					verifiedInfo.setVerifiedInfo(retrievedField);
+		    		verifiedInfo.setIsVerifiedMethodCallIdentified(false);
+					allVerifiedInfo.add(verifiedInfo);
+				}
 			}
 			else if (methType.equals(MethodCall.INTERNAL_PRODUCER)) {
-				if (methCall.getReturnedValue().equals(""))
-                		methCall.setReturnedValue(methCall.getMethodCallName());
-				verifiedInfo.add(methCall.getReturnedValue());
+				methCall.setReturnedValue("return value of " + methCall.getMethodCallName()); // as the return value cannot be calculated on the spot!
+				MethodCall.addNewMethodCall(methodCalls, methCall);
+				
+				VerifiedInformation verifiedInfo = new VerifiedInformation();
+				verifiedInfo.setSourceMethodCallName(methCall.getMethodCallName());
+				verifiedInfo.setSourceMethodCallPosition(methCall.getPosition());
+				verifiedInfo.setVerifiedMethodCall(methCall);
+				verifiedInfo.setVerifiedInfo(methCall.getReturnedValue());
+				allVerifiedInfo.add(verifiedInfo);				
 			}				
 		}
-    	return verifiedInfo;
+    	return allVerifiedInfo;
     }
 
     private void analyzeCalledMethod(MethodDeclaration method, String callingObject, ArrayList<String> modifiedFields,
@@ -565,6 +600,7 @@ public class MyParser {
     	MethodCall methCall = new MethodCall();
     	methCall.setMethodType(MethodCall.CREATIONAL);    	
         methCall.setMethodCallName(constructorCall.getTokenRange().get().toString());
+        methCall.setPosition(getExpressionPosition(constructorCall));
         System.out.println("Call: " + methCall.getMethodCallName());
         
 //    	ObjectCreationExpr constructorCall = (ObjectCreationExpr) initializer;
@@ -627,7 +663,10 @@ public class MyParser {
     	}
     }
 
-        
+    private String getExpressionPosition(Expression expr) {
+		String position = expr.getRange().get().begin.line + " - " + expr.getRange().get().end.line;
+		return position;    	
+    }
 }
 
 
