@@ -172,10 +172,9 @@ public class MyParser {
 				return true;
     	}
     	return false;
-    }
+    }    
     
-    
-     private MethodCall handleAssignExpr(AssignExpr expr) {
+    private MethodCall handleAssignExpr(AssignExpr expr) {
     	MethodCall methCall = new MethodCall();
         Expression valueExpr = expr.getValue();
         Expression targetExpr = expr.getTarget();
@@ -220,12 +219,10 @@ public class MyParser {
         try {
             // attempt to get the source code for the called method
             // this fails if the source code is not in javaDir (see constructor)
-            // Basically, failure indicates external methods
+            // Basically, failure indicates external methods: assert and external producer
             ResolvedMethodDeclaration declaration = call.resolve();
             if (declaration instanceof JavaParserMethodDeclaration) {
                 MethodDeclaration methDeclaration = ((JavaParserMethodDeclaration) declaration).getWrappedNode();
-                // TODO: classify methods
-//                System.out.println("Lines: " + methDeclaration.getRange());
                 // get calling object name
                 String callingObject = call.getScope().get().toString();
                 ArrayList<String> modifiedFields = new ArrayList<String>();
@@ -248,7 +245,6 @@ public class MyParser {
                 boolean isGet = false;
                 boolean isInternalProducer = false;
         		isPotentialAccessor = isPotentialAccessorMethod(methDeclaration);
-//        		if (isMutator) {
         		if (modifiedFields.size() > 0) {
                     System.out.println("\tis Mutator!"); 
                     methCall.setMethodType(MethodCall.MUTATOR);
@@ -274,8 +270,6 @@ public class MyParser {
             // then, we can identify asserts by their location in the Assert package (I hope)
             // TODO: there are other test frameworks and folders, e.g., jupiter in junit-5
             if (e.getName().equals("org.junit.Assert")) {
-                // TODO: check what the assert statement checks
-//                isAssert = true;
                 methCall.setMethodType(MethodCall.ASSERT_STMT);
                 ArrayList<VerifiedInformation> verifiedInfo = handleAssertStatement(call, methodCalls);
                 methCall.setVerifiedInfo(verifiedInfo);
@@ -515,7 +509,6 @@ public class MyParser {
         Expression targetExpression = null;
         Expression expr = null;
         if (originalExpr.getParentNode().isPresent()) {
-//        	System.out.println("\tparentNode: " + originalExpr.getParentNode().toString());
         	Node parentNode = originalExpr.getParentNode().get();
         	if (parentNode instanceof ReturnStmt) {
         		expr = originalExpr;
@@ -525,7 +518,6 @@ public class MyParser {
         		expr = (Expression) parentNode;
         	}
         	
-//        		Expression parentExpr = (Expression) parentNode;
             if (expr instanceof UnaryExpr) {
             	targetExpression = ((UnaryExpr) expr).getExpression();
             	if(originalExpr.equals(targetExpression)) {
@@ -646,11 +638,8 @@ public class MyParser {
         if (declaration instanceof JavaParserConstructorDeclaration) {
         	boolean isFromSuperConstructor = false;
             ConstructorDeclaration constrDeclaration = ((JavaParserConstructorDeclaration) declaration).getWrappedNode();
-//        	System.out.println("Lines: " + constrDeclaration.getRange());
             ArrayList<String> modifiedFields = new ArrayList<String>();
             analyzeCalledConstructor(constrDeclaration, varName, modifiedFields, isFromSuperConstructor); // TODO: not sure how it works when replacing callingObj with initializedObj
-//            constrDeclaration.findAll(Expression.class).forEach(c -> System.out.println("\tExpr: " + c));
-//            constrDeclaration.findAll(MethodCallExpr.class).forEach(c -> handleInnerMethodExpression(c, varName, modifiedFields, null, null, false)); //hardcode isFromSuperConstructor = false
             for (MethodCallExpr c : constrDeclaration.findAll(MethodCallExpr.class)) {
             	handleInnerMethodExpression(c, varName, modifiedFields, null, null, isFromSuperConstructor);
             }
@@ -658,7 +647,6 @@ public class MyParser {
             
             //find a call to super or this in the constructor
             for (ExplicitConstructorInvocationStmt s: constrDeclaration.findAll(ExplicitConstructorInvocationStmt.class)) {
-//            	System.out.println (s.getTokenRange().get().toString());
             	if (s.getTokenRange().get().toString().contains("super"))
             		isFromSuperConstructor = true;
             	else
@@ -666,10 +654,7 @@ public class MyParser {
             	ResolvedConstructorDeclaration resolvedDeclaration = s.resolve();
             	if (resolvedDeclaration instanceof JavaParserConstructorDeclaration) {
                     ConstructorDeclaration resolvedConstrDeclaration = ((JavaParserConstructorDeclaration) resolvedDeclaration).getWrappedNode();
-//                 	System.out.println("Lines: " + resolvedConstrDeclaration.getRange());
                  	analyzeCalledConstructor(resolvedConstrDeclaration, initializedObj, modifiedFields, isFromSuperConstructor); // TODO: not sure how it works when replacing callingObj with initializedObj
-//                 	resolvedConstrDeclaration.findAll(Expression.class).forEach(c -> System.out.println("\tExpr: " + c));
-//                 	resolvedConstrDeclaration.findAll(MethodCallExpr.class).forEach(c -> handleInnerMethodExpression(c, varName, modifiedFields, null, null, isFromSuperConstructor));           
                  	for (MethodCallExpr c : resolvedConstrDeclaration.findAll(MethodCallExpr.class)) {
                  		handleInnerMethodExpression(c, varName, modifiedFields, null, null, isFromSuperConstructor);
                  	}
