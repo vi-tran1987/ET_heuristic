@@ -56,6 +56,7 @@ import com.github.javaparser.symbolsolver.javaparsermodel.declarations.JavaParse
 import com.github.javaparser.symbolsolver.javaparsermodel.declarations.JavaParserConstructorDeclaration;
 import com.github.javaparser.symbolsolver.javaparsermodel.declarations.JavaParserMethodDeclaration;
 import com.github.javaparser.symbolsolver.javaparsermodel.declarations.JavaParserVariableDeclaration;
+import com.github.javaparser.symbolsolver.reflectionmodel.ReflectionMethodDeclaration;
 import com.github.javaparser.symbolsolver.resolution.typesolvers.CombinedTypeSolver;
 import com.github.javaparser.symbolsolver.resolution.typesolvers.ReflectionTypeSolver;
 import com.github.javaparser.symbolsolver.resolution.typesolvers.JavaParserTypeSolver;
@@ -162,8 +163,8 @@ public class MyParser {
     		ArrayList<VerifiedInformation> allVerfiedInfo = assertStmt.getVerifiedInfo();
     		ArrayList<MethodCall> allVerifiedMethCallsPerAssertStmt = new ArrayList<MethodCall>();
     		for (VerifiedInformation verifiedInfo : allVerfiedInfo) {
-    			MethodCall verifiedMC = verifiedInfo.getVerifiedMethodCall();
-    			MethodCall.addNewMethodCall(allVerifiedMethCallsPerAssertStmt, verifiedMC);
+    			ArrayList<MethodCall> verifiedMCs = verifiedInfo.getVerifiedMethodCalls();
+    			MethodCall.addMultipleNewMethodCall(allVerifiedMethCallsPerAssertStmt, verifiedMCs);
     			if (allVerifiedMethCallsPerAssertStmt.size() == 2)
     				return true;
     		}
@@ -179,6 +180,10 @@ public class MyParser {
         Expression valueExpr = expr.getValue();
         Expression targetExpr = expr.getTarget();
         String targetVar = targetExpr.toString();
+        // get type and name of the target variable if possible
+        if (targetExpr instanceof NameExpr)
+        	targetVar = getTypeNNameOfReturnValue((NameExpr) targetExpr);        
+        
         if (valueExpr instanceof MethodCallExpr) {
 			methCall = handleMethodExpression((MethodCallExpr) valueExpr, null);    			
 			methCall.setReturnedValue(targetVar);
@@ -194,6 +199,9 @@ public class MyParser {
         ArrayList<MethodCall> methodCalls = new ArrayList<MethodCall>();
     	for (VariableDeclarator varDeclarator: expr.findAll(VariableDeclarator.class)) {
     		String varName = varDeclarator.getNameAsString();
+    		ResolvedValueDeclaration reVarDeclarator = varDeclarator.resolve();
+    		varName = getTypeNNameOfVariable(reVarDeclarator, varName);   		
+    		   		
     		Expression initializer = varDeclarator.getInitializer().get();
     		
     		if (initializer instanceof MethodCallExpr) {
@@ -210,21 +218,21 @@ public class MyParser {
     	return methodCalls;
     }  
     
-    private MethodCall handleMethodExpression(MethodCallExpr call, ArrayList<MethodCall> methodCalls) {
+    private MethodCall handleMethodExpression(MethodCallExpr methCallExpr, ArrayList<MethodCall> methodCalls) {
         MethodCall methCall = new MethodCall();
-        methCall.setMethodCallName(call.getTokenRange().get().toString());
-        methCall.setPosition(getExpressionPosition(call));
+        methCall.setMethodCallName(methCallExpr.getTokenRange().get().toString());
+        methCall.setPosition(getExpressionPosition(methCallExpr));
         System.out.println("Call: " + methCall.getMethodCallName());
         boolean isFromSuperConstructor = false;
         try {
             // attempt to get the source code for the called method
             // this fails if the source code is not in javaDir (see constructor)
             // Basically, failure indicates external methods: assert and external producer
-            ResolvedMethodDeclaration declaration = call.resolve();
+            ResolvedMethodDeclaration declaration = methCallExpr.resolve();
             if (declaration instanceof JavaParserMethodDeclaration) {
                 MethodDeclaration methDeclaration = ((JavaParserMethodDeclaration) declaration).getWrappedNode();
                 // get calling object name
-                String callingObject = call.getScope().get().toString();
+                String callingObject = methCallExpr.getScope().get().toString();
                 ArrayList<String> modifiedFields = new ArrayList<String>();
                 ArrayList<String> returnedFields = new ArrayList<String>();
                 ArrayList<String> retrievedFields = new ArrayList<String>();
@@ -261,7 +269,12 @@ public class MyParser {
                 }
         		
         		
-            } else {
+            } 
+            else if (declaration instanceof ReflectionMethodDeclaration) {
+            	methCall.setMethodType(MethodCall.EXTERNAL_PRODUCER);
+            	handleExternalProducerMethodCall((ReflectionMethodDeclaration) declaration, methCall, methCallExpr, methodCalls);            	           	
+            }
+            else {
                 // I don't know if this will ever happen
                 System.out.println("WARN: strange method found: " + declaration);
             }
@@ -271,12 +284,68 @@ public class MyParser {
             // TODO: there are other test frameworks and folders, e.g., jupiter in junit-5
             if (e.getName().equals("org.junit.Assert")) {
                 methCall.setMethodType(MethodCall.ASSERT_STMT);
-                ArrayList<VerifiedInformation> verifiedInfo = handleAssertStatement(call, methodCalls);
+                ArrayList<VerifiedInformation> verifiedInfo = handleAssertStatement(methCallExpr, methodCalls);
                 methCall.setVerifiedInfo(verifiedInfo);
                 System.out.println("Assert stmt: " + methCall.getMethodCallName() + " --- Verified Info: " + methCall.getVerifiedInfo());      	
             }
+            // assumption: if this is not an assert stmt, then it is an method from an external library
+            else {
+//            	methCall.setMethodType(MethodCall.EXTERNAL_PRODUCER);
+//            	handleExternalMethodCall(call, methodCalls);
+            }
         }
         return methCall;
+    }
+    
+    // assumption: an external producer retrieves one single field from the calling object such as length, size, etc.
+    private void handleExternalProducerMethodCall(ReflectionMethodDeclaration d, MethodCall methCall, MethodCallExpr methCallExpr, ArrayList<MethodCall> methodCalls) {
+    	System.out.println("WARNING: External producer method!");
+    	// get calling object 
+    	String callingObject = "";
+        for (NameExpr nameExpr : methCallExpr.findAll(NameExpr.class)) {
+        	ResolvedValueDeclaration value = nameExpr.resolve();
+            if (value.isField()) {
+                ResolvedFieldDeclaration field = (ResolvedFieldDeclaration) value;
+                ResolvedTypeDeclaration type = field.declaringType();
+                callingObject = type.getQualifiedName() + "." + field.getName();
+            }
+        }        
+        System.out.println("\tCalling object: " + callingObject);
+        
+        //extract method name
+    	String methName = methCall.getMethodCallName().substring(methCall.getMethodCallName().lastIndexOf(".")+1, methCall.getMethodCallName().indexOf("("));
+    	//listing cases that we can predict
+    	switch(methName) {
+    	case "toString":
+    		//do nothing
+    		break;    	
+    	case "length":
+    	case "isEmpty":
+    		methCall.getRetrievedFields().add(callingObject + ".length");
+    		break;
+    	case "size":
+    		methCall.getRetrievedFields().add(callingObject + ".size");
+    		break;
+    	default:
+    		//assumption: this external producer method call retrieves all the fields modified by mutators(constructors) above 
+    		ArrayList<MethodCall> methCallsAboveExternalProducerCall = MethodCall.getMethodCallAboveAPosition(methCall.getPosition(), methodCalls);
+    		for (int i = methCallsAboveExternalProducerCall.size()-1; i >= 0; i--) {
+    			MethodCall mCall = methCallsAboveExternalProducerCall.get(i);
+    			if (mCall.getMethodType().equals(MethodCall.MUTATOR) ||
+    				mCall.getMethodType().equals(MethodCall.CREATIONAL)) 
+    			{
+    				ArrayList<String> modifiedFields = mCall.getModifiedFields();
+    				for (String modifiedField : modifiedFields) {
+    					String callingObj = modifiedField.substring(0, modifiedField.lastIndexOf("."));
+    					if (callingObj.equals(callingObject)) {
+    			    		methCall.getRetrievedFields().add(modifiedField);
+    					}    						
+    				}    					
+    			}    			    				
+    		}    		
+    		break;
+    	}
+    	
     }
     
     private ArrayList<VerifiedInformation> handleAssertStatement(MethodCallExpr assertCall, ArrayList<MethodCall> methodCalls) {
@@ -316,7 +385,7 @@ public class MyParser {
     	if (expr instanceof NameExpr) {		
     		//get full name of the verified info
     		NameExpr nameExpr = (NameExpr) expr;
-    		String verifiedName = getVerifiedName(nameExpr);
+    		String verifiedName = getTypeNNameOfReturnValue(nameExpr);
     		
     		// search for the source method call of the verifiedName
         	MethodCall sourceMC = getSourceMethodCallOfVerifiedName(verifiedName, mcPosition, methodCalls);
@@ -326,21 +395,23 @@ public class MyParser {
     		if (verifiedInfo.getSourceMethodCall().getMethodType().equals(MethodCall.MUTATOR) ||
     			verifiedInfo.getSourceMethodCall().getMethodType().equals(MethodCall.CREATIONAL))
     		{	
-    			verifiedInfo.setVerifiedMethodCall(verifiedInfo.getSourceMethodCall());
+    			verifiedInfo.getVerifiedMethodCalls().add(verifiedInfo.getSourceMethodCall());
     			verifiedInfo.getVerifiedInfo().add(verifiedName);
     			verifiedInfo.getVerifiedInfo().addAll(verifiedInfo.getSourceMethodCall().getModifiedFields());
     		}
     		else if (verifiedInfo.getSourceMethodCall().getMethodType().equals(MethodCall.INTERNAL_PRODUCER)) {
-    			verifiedInfo.setVerifiedMethodCall(verifiedInfo.getSourceMethodCall());
+    			verifiedInfo.getVerifiedMethodCalls().add(verifiedInfo.getSourceMethodCall());
         		verifiedInfo.getVerifiedInfo().add(verifiedName);
         	}
     		else if (verifiedInfo.getSourceMethodCall().getMethodType().equals(MethodCall.GET) ||
-    				 verifiedInfo.getSourceMethodCall().getMethodType().equals(MethodCall.EXTERNAL_PRODUCER)) 
+    				verifiedInfo.getSourceMethodCall().getMethodType().equals(MethodCall.EXTERNAL_PRODUCER)) 
     		{    			
     			ArrayList<String> retrievedFields = verifiedInfo.getSourceMethodCall().getRetrievedFields();
-        		verifiedInfo.getVerifiedInfo().addAll(retrievedFields); //TODO: assumption: a get method has only 1 retrieved field!
-        		MethodCall verifiedMethodCall = getVerifiedMethodCall(verifiedInfo, methodCalls);
-				verifiedInfo.setVerifiedMethodCall(verifiedMethodCall);
+        		verifiedInfo.getVerifiedInfo().addAll(retrievedFields); 
+        		//TODO: assumption: a get method has only 1 retrieved field!
+        		ArrayList<MethodCall> verifiedMethodCalls = getVerifiedMethodCalls(verifiedInfo, methodCalls);
+        		MethodCall.addMultipleNewMethodCall(verifiedInfo.getVerifiedMethodCalls(), verifiedMethodCalls);
+//				verifiedInfo.getVerifiedMethodCalls().add(verifiedMethodCall);
     		}    		
     	}
     	else if (expr instanceof MethodCallExpr) {
@@ -350,31 +421,33 @@ public class MyParser {
     		
 			String methType = methCall.getMethodType();
 			if (methType.equals(MethodCall.CREATIONAL) || methType.equals(MethodCall.MUTATOR)) {
-				verifiedInfo.setVerifiedMethodCall(methCall);
+				verifiedInfo.getVerifiedMethodCalls().add(methCall);
 				verifiedInfo.getVerifiedInfo().addAll(methCall.getModifiedFields());
 
 				methCall.setReturnedValue("return value of " + methCall.getMethodCallName());
 				MethodCall.addNewMethodCall(methodCalls, methCall);				
-				verifiedInfo.setVerifiedMethodCall(methCall);
+				verifiedInfo.getVerifiedMethodCalls().add(methCall);
 				verifiedInfo.getVerifiedInfo().add(methCall.getReturnedValue());
 			}
 			else if (methType.equals(MethodCall.GET) || methType.equals(MethodCall.EXTERNAL_PRODUCER)) {
 				verifiedInfo.getVerifiedInfo().addAll(methCall.getRetrievedFields());
-				MethodCall verifiedMethodCall = getVerifiedMethodCall(verifiedInfo, methodCalls);
-				verifiedInfo.setVerifiedMethodCall(verifiedMethodCall);
+				ArrayList<MethodCall> verifiedMethodCalls = getVerifiedMethodCalls(verifiedInfo, methodCalls);
+				MethodCall.addMultipleNewMethodCall(verifiedInfo.getVerifiedMethodCalls(), verifiedMethodCalls);
+//				verifiedInfo.setVerifiedMethodCall(verifiedMethodCall);
 				
 			}
 			else if (methType.equals(MethodCall.INTERNAL_PRODUCER)) {
 				methCall.setReturnedValue("return value of " + methCall.getMethodCallName()); // as the return value cannot be calculated on the spot!
 				MethodCall.addNewMethodCall(methodCalls, methCall);				
-				verifiedInfo.setVerifiedMethodCall(methCall);
+				verifiedInfo.getVerifiedMethodCalls().add(methCall);
 				verifiedInfo.getVerifiedInfo().add(methCall.getReturnedValue());
 			}				
 		}
     	return verifiedInfo;
     }
     
-    private MethodCall getVerifiedMethodCall (VerifiedInformation verifiedInfo, ArrayList<MethodCall> methodCalls) {
+    private ArrayList<MethodCall> getVerifiedMethodCalls (VerifiedInformation verifiedInfo, ArrayList<MethodCall> methodCalls) {
+    	ArrayList<MethodCall> verifiedMethCalls = new ArrayList<MethodCall>();
     	ArrayList<MethodCall> methCallsAboveSourceMethCall = MethodCall.getMethodCallAboveAPosition(verifiedInfo.getSourceMethodCall().getPosition(), methodCalls);
 		ArrayList<String> retrievedFields = verifiedInfo.getSourceMethodCall().getRetrievedFields();
 		
@@ -386,13 +459,15 @@ public class MyParser {
     			{
     				ArrayList<String> modifiedFields = mCall.getModifiedFields();
 	    			if (modifiedFields.contains(retrievedField)) {
-	    				return mCall; //TODO: assumption: a get method has only 1 retrieved field!
+	    				//TODO: assumption: a get method has only 1 retrieved field!
+	    				MethodCall.addNewMethodCall(verifiedMethCalls, mCall);
+	    				break;
 	    			}
     			}
     			    				
     		}
 		}
-    	return null;
+    	return verifiedMethCalls;
     }
     
     private MethodCall getSourceMethodCallOfVerifiedName(String verifiedName, MethodCallPosition mcPosition, ArrayList<MethodCall> methodCalls) {
@@ -407,21 +482,37 @@ public class MyParser {
 		return null;
     }
     
-    private String getVerifiedName(NameExpr nameExpr) {
-    	String verifiedName = "";
+    private String getTypeNNameOfReturnValue(NameExpr nameExpr) {
+    	String typeNName = "";
+    	String varName = nameExpr.getName().getIdentifier();
 		ResolvedValueDeclaration valueDeclaration = nameExpr.resolve();
 		
+		typeNName = getTypeNNameOfVariable(valueDeclaration, varName);
+//		ResolvedType type = valueDeclaration.getType();
+//		if (type instanceof ResolvedPrimitiveType) {
+//			typeNName = varName;
+//		}
+//		else if (type instanceof ResolvedReferenceType) {    			
+//			ResolvedReferenceType referenceType = (ResolvedReferenceType)type;    			
+//			typeNName = referenceType.getQualifiedName() + "." + varName;
+//		}
+		return typeNName;
+    }
+    
+    private String getTypeNNameOfVariable(ResolvedValueDeclaration valueDeclaration, String varName) {
+    	String typeNName = "";
+    	
 		ResolvedType type = valueDeclaration.getType();
 		if (type instanceof ResolvedPrimitiveType) {
-			verifiedName = nameExpr.getName().getIdentifier();
+			typeNName = varName;
 		}
 		else if (type instanceof ResolvedReferenceType) {    			
 			ResolvedReferenceType referenceType = (ResolvedReferenceType)type;    			
-			verifiedName = referenceType.getQualifiedName() + "." + nameExpr.getName().getIdentifier();
+			typeNName = referenceType.getQualifiedName() + "." + varName;
 		}
-		return verifiedName;
+		return typeNName;
     }
-    
+        
     private void analyzeCalledMethod(MethodDeclaration method, String callingObject, ArrayList<String> modifiedFields,
     		ArrayList<String> returnedFields, ArrayList<String> retrievedFields, boolean isFromSuperConstructor) {
             
@@ -572,14 +663,25 @@ public class MyParser {
                 analyzeInnerCalledMethod(d, callingObject, modifiedFields, returnedFields, retrievedFields, isFromSuperConstructor);
 //                d.findAll(Expression.class).forEach(c -> System.out.println("\tInner Call: " + c));
                 d.findAll(MethodCallExpr.class).forEach(c -> handleInnerMethodExpression(c, callingObject, modifiedFields, returnedFields, retrievedFields, isFromSuperConstructor));
-            } else {
+            }
+            //TODO: external producer does not affect anything
+            // outer is mutator + inner is external producer -> this e. producer cannot help to modify field(s)
+            // outer is creational + inner is external producer -> this e. producer does not initialize any field
+            // outer is internal producer + inner is external producer -> it does not matter as we care about the return value of the outer method only.
+            else if (declaration instanceof ReflectionMethodDeclaration) {
+            	// does nothing
+            	System.out.println("the inner method is an external producer method: " + declaration);
+            }
+            else {
                 // I don't know if this will ever happen
                 System.out.println("WARN: strange method found: " + declaration);
+                
             }
         } catch(UnsolvedSymbolException e){
             System.out.println(e.getName()); 
         }
     }
+    
     
     private void analyzeInnerCalledMethod(MethodDeclaration method, String callingObject, ArrayList<String> modifiedFields,
     		ArrayList<String> returnedFields, ArrayList<String> retrievedFields, boolean isFromSuperConstructor) {
@@ -621,6 +723,7 @@ public class MyParser {
         	System.out.println("\tInner method is Internal Producer!"); 
         }		
     }
+    
         
     private MethodCall handleConstructorCall(ObjectCreationExpr constructorCall, String varName) {
     	MethodCall methCall = new MethodCall();
@@ -665,6 +768,7 @@ public class MyParser {
         }
         return methCall;
     }
+        
     
     private void analyzeCalledConstructor(ConstructorDeclaration constrDeclaration, String initializedObj, ArrayList<String> modifiedFields, boolean isSuperConstructor) {
         // check all field accesses
@@ -681,7 +785,7 @@ public class MyParser {
     			updateFieldsAccessListByCalledMethod(expr, classField, modifiedFields, null, null);
     	}
     }
-
+    
     
     private MethodCallPosition getExpressionPosition(Expression expr) {
     	int beginLine = expr.getRange().get().begin.line;
