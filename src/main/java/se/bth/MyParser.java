@@ -117,7 +117,9 @@ public class MyParser {
     private void processMethod(MethodDeclaration method) {
         // Analyse only methods, which are annotated with 'Test'
         if (method.getAnnotationByName("Test").isPresent()) {
-            System.out.println(method.getNameAsString());
+        	System.out.println("--------------------------------------------------");
+            System.out.println("TEST CASE: " + method.getNameAsString());
+            
             boolean isEagerTest = false;
             ArrayList<MethodCall> methodCalls = new ArrayList<MethodCall>();
 //            ArrayList<MethodCallExpr> analysedMethodCallExprs = new ArrayList<MethodCallExpr>(); //might need to use it later to avoid double work
@@ -199,13 +201,15 @@ public class MyParser {
         ArrayList<MethodCall> methodCalls = new ArrayList<MethodCall>();
     	for (VariableDeclarator varDeclarator: expr.findAll(VariableDeclarator.class)) {
     		String varName = varDeclarator.getNameAsString();
-    		ResolvedValueDeclaration reVarDeclarator = varDeclarator.resolve();
-    		varName = getTypeNNameOfVariable(reVarDeclarator, varName);   		
+//    		ResolvedValueDeclaration reVarDeclarator = varDeclarator.resolve();
+//    		varName = getTypeNNameOfVariable(reVarDeclarator, varName);   		
     		   		
     		Expression initializer = varDeclarator.getInitializer().get();
     		
     		if (initializer instanceof MethodCallExpr) {
-    			MethodCall methCall = handleMethodExpression((MethodCallExpr) initializer, null);    			
+    			MethodCall methCall = handleMethodExpression((MethodCallExpr) initializer, null);  
+    			ResolvedValueDeclaration reVarDeclarator = varDeclarator.resolve();
+        		varName = getTypeNNameOfVariable(reVarDeclarator, varName);
     			methCall.setReturnedValue(varName);
     			System.out.println("\tReturn value: " + methCall.getReturnedValue());
     			MethodCall.addNewMethodCall(methodCalls, methCall);
@@ -547,8 +551,8 @@ public class MyParser {
                 NameExpr nameExpr = (NameExpr) scope;
                 ResolvedValueDeclaration value = nameExpr.resolve();
                 ResolvedReferenceType type = value.getType().asReferenceType();
-                fieldAccess = type.getQualifiedName() + "." + value.getName() + "." + callingObject + "."
-                			+ expr.getNameAsString();
+                fieldAccess = type.getQualifiedName() + "." + callingObject + "." + value.getName()
+                			  + "." + expr.getNameAsString();
                 System.out.println("\tField Access: " + fieldAccess);
             } else {
                 throw new RuntimeException("Unknown instance for: " + scope);
