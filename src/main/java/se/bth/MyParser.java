@@ -23,6 +23,7 @@ import com.github.javaparser.ast.body.ClassOrInterfaceDeclaration;
 import com.github.javaparser.ast.body.ConstructorDeclaration;
 import com.github.javaparser.ast.body.FieldDeclaration;
 import com.github.javaparser.ast.body.MethodDeclaration;
+import com.github.javaparser.ast.body.Parameter;
 import com.github.javaparser.ast.body.VariableDeclarator;
 import com.github.javaparser.ast.expr.AssignExpr;
 import com.github.javaparser.ast.expr.BinaryExpr;
@@ -46,6 +47,7 @@ import com.github.javaparser.resolution.UnsolvedSymbolException;
 import com.github.javaparser.resolution.declarations.ResolvedConstructorDeclaration;
 import com.github.javaparser.resolution.declarations.ResolvedFieldDeclaration;
 import com.github.javaparser.resolution.declarations.ResolvedMethodDeclaration;
+import com.github.javaparser.resolution.declarations.ResolvedParameterDeclaration;
 import com.github.javaparser.resolution.declarations.ResolvedTypeDeclaration;
 import com.github.javaparser.resolution.declarations.ResolvedValueDeclaration;
 import com.github.javaparser.resolution.types.ResolvedPrimitiveType;
@@ -55,6 +57,7 @@ import com.github.javaparser.symbolsolver.JavaSymbolSolver;
 import com.github.javaparser.symbolsolver.javaparsermodel.declarations.JavaParserClassDeclaration;
 import com.github.javaparser.symbolsolver.javaparsermodel.declarations.JavaParserConstructorDeclaration;
 import com.github.javaparser.symbolsolver.javaparsermodel.declarations.JavaParserMethodDeclaration;
+import com.github.javaparser.symbolsolver.javaparsermodel.declarations.JavaParserParameterDeclaration;
 import com.github.javaparser.symbolsolver.javaparsermodel.declarations.JavaParserVariableDeclaration;
 import com.github.javaparser.symbolsolver.reflectionmodel.ReflectionMethodDeclaration;
 import com.github.javaparser.symbolsolver.resolution.typesolvers.CombinedTypeSolver;
@@ -137,10 +140,11 @@ public class MyParser {
                 	MethodCall methCall = handleAssignExpr((AssignExpr) expr);
                 	MethodCall.addNewMethodCall(methodCalls, methCall);                    
                 }
+            	// TODO: think if other expression types are important here as well
 //                else if (!(expr instanceof MarkerAnnotationExpr)) {
 //                	throw new RuntimeException ("Unknown expression when processing method! :" + expr);
 //                }
-                // TODO: think if other expression types are important here as well
+                
             }
 
             for (MethodCall c : methodCalls) {
@@ -184,7 +188,7 @@ public class MyParser {
         String targetVar = targetExpr.toString();
         // get type and name of the target variable if possible
         if (targetExpr instanceof NameExpr)
-        	targetVar = getTypeNNameOfReturnValue((NameExpr) targetExpr);        
+        	targetVar = getTypeNNameOfNameExpr((NameExpr) targetExpr);        
         
         if (valueExpr instanceof MethodCallExpr) {
 			methCall = handleMethodExpression((MethodCallExpr) valueExpr, null);    			
@@ -209,7 +213,7 @@ public class MyParser {
     		if (initializer instanceof MethodCallExpr) {
     			MethodCall methCall = handleMethodExpression((MethodCallExpr) initializer, null);  
     			ResolvedValueDeclaration reVarDeclarator = varDeclarator.resolve();
-        		varName = getTypeNNameOfVariable(reVarDeclarator, varName);
+        		varName = getTypeNNameOfVariable(reVarDeclarator.getType(), varName);
     			methCall.setReturnedValue(varName);
     			System.out.println("\tReturn value: " + methCall.getReturnedValue());
     			MethodCall.addNewMethodCall(methodCalls, methCall);
@@ -222,12 +226,51 @@ public class MyParser {
     	return methodCalls;
     }  
     
+    private String getTypeNNameOfArgument (Expression arg) {
+    	String typeNName = "";
+    	
+    	if (arg instanceof NameExpr) {
+			typeNName = getTypeNNameOfNameExpr((NameExpr)arg);
+		}    			
+		else if (arg instanceof MethodCallExpr) {
+			MethodCallExpr mcExpr = (MethodCallExpr) arg;
+			MethodCall mCall = handleMethodExpression(mcExpr, null);
+			// assumption: the method call must return one field only, typically: get()
+			if (mCall.getReturnedFields().size() == 1) { 
+				typeNName = mCall.getReturnedFields().get(0);
+			}			    				
+		}
+		//TODO: don't have to handle constructor call as an argument as the initialized object cannot be
+    	// referred to later on, right?
+		else if (arg instanceof ObjectCreationExpr) {
+			throw new RuntimeException ("Constructor call as an argument of a normal method call! :" + arg);
+		} 
+    	return typeNName;
+    }
+    
+    private void updatedFields(ArrayList<String> fields, ArrayList<ArrayList<String>> argParaTraces, int methLayer) {
+    	for (int i = 0; i < fields.size(); i++) {
+        	String mField = fields.get(i);
+        	for (ArrayList<String> argParaTrace : argParaTraces) {
+        		if (mField.contains(argParaTrace.get(methLayer) + ".")) {
+        			String para = argParaTrace.get(methLayer) + ".";
+        			int pos = mField.indexOf(para) + para.length();
+        			String updatedMField = argParaTrace.get(0) + "." + mField.substring(pos);
+        			fields.add(i, updatedMField);
+        			fields.remove(i+1);
+        			break;
+        		}
+        	}
+        }
+    }
+    
     private MethodCall handleMethodExpression(MethodCallExpr methCallExpr, ArrayList<MethodCall> methodCalls) {
         MethodCall methCall = new MethodCall();
         methCall.setMethodCallName(methCallExpr.getTokenRange().get().toString());
         methCall.setPosition(getExpressionPosition(methCallExpr));
         System.out.println("Call: " + methCall.getMethodCallName());
         boolean isFromSuperConstructor = false;
+      	int methodLayer = 0;
         try {
             // attempt to get the source code for the called method
             // this fails if the source code is not in javaDir (see constructor)
@@ -235,16 +278,66 @@ public class MyParser {
             ResolvedMethodDeclaration declaration = methCallExpr.resolve();
             if (declaration instanceof JavaParserMethodDeclaration) {
                 MethodDeclaration methDeclaration = ((JavaParserMethodDeclaration) declaration).getWrappedNode();
-                // get calling object name
-                String callingObject = methCallExpr.getScope().get().toString();
+                // get the name of the calling object OR class
+                String callingObjOrClass = methCallExpr.getScope().get().toString();
+                NameExpr ne = (NameExpr) methCallExpr.getScope().get(); 
+                ResolvedType typeOfCallingObj = ne.calculateResolvedType();
+                boolean isClassName = false;
+                if (typeOfCallingObj.isReferenceType()) {
+                	String s = typeOfCallingObj.describe().substring(typeOfCallingObj.describe().lastIndexOf(".")+1);
+                	if (callingObjOrClass.equals(s))
+                		isClassName = true;
+                }           
+                	
                 ArrayList<String> modifiedFields = new ArrayList<String>();
                 ArrayList<String> returnedFields = new ArrayList<String>();
                 ArrayList<String> retrievedFields = new ArrayList<String>();
-                analyzeCalledMethod(methDeclaration, callingObject, modifiedFields, returnedFields, retrievedFields, isFromSuperConstructor);
-//                methDeclaration.findAll(Expression.class).forEach(c -> System.out.println("\tCall: " + c));
-                methDeclaration.findAll(MethodCallExpr.class).forEach(c -> handleInnerMethodExpression(c, callingObject, modifiedFields, returnedFields, retrievedFields, isFromSuperConstructor));
+                collectAllFields(methDeclaration, callingObjOrClass, modifiedFields, returnedFields, retrievedFields, isFromSuperConstructor);
                 
-
+                // deal with parameters
+                ArrayList<ArrayList<String>> argParaTraces = new ArrayList<ArrayList<String>>();
+                if (methDeclaration.getParameters().isNonEmpty()) {
+                	// get parameters
+        			ArrayList<String> parameters = new ArrayList<String>(); 
+                	for (Parameter para : methDeclaration.getParameters()) {
+            			ResolvedParameterDeclaration paraDecl = para.resolve();
+            			if (paraDecl.getType().isReferenceType()) {
+//            				String paraType = paraDecl.describeType();
+//            				String paraTypeNName = paraType + "." + para.getNameAsString();
+//            				parameters.add(paraTypeNName);
+            				String paraName = para.getNameAsString();
+            				parameters.add(paraName);
+            			}
+            			else
+            				parameters.add(""); // meaning not an object
+                	}
+                	
+                	for (int i = 0; i < parameters.size(); i++) {
+                		String paraName = parameters.get(i);
+                		if (!paraName.equals("")) {
+                			ArrayList<String> argParaTrace = new ArrayList<String>();
+                			Expression arg = methCallExpr.getArgument(i);
+                			String argTypeNName = getTypeNNameOfArgument(arg);
+                			argParaTrace.add(argTypeNName);
+                			argParaTrace.add(paraName);
+                			argParaTraces.add(argParaTrace);
+                		}                    	
+                    }
+                }
+                
+                //update related fields based on the arguments
+                updatedFields(modifiedFields, argParaTraces, methodLayer);
+                updatedFields(retrievedFields, argParaTraces, methodLayer);
+                updatedFields(returnedFields, argParaTraces, methodLayer);
+                
+                // handle inner method calls
+                methodLayer++;
+                for (MethodCallExpr c: methDeclaration.findAll(MethodCallExpr.class)) {
+                	handleInnerMethodExpression(c, callingObjOrClass, modifiedFields, returnedFields, retrievedFields, isFromSuperConstructor, argParaTraces, methodLayer);
+                }
+//                methDeclaration.findAll(MethodCallExpr.class).forEach(
+//                		c -> handleInnerMethodExpression(c, callingObjOrClass, modifiedFields, returnedFields, retrievedFields, isFromSuperConstructor, argParaTraces, methodLayer++));
+                
         		methCall.setModifiedFields(modifiedFields);
         		methCall.setRetrievedFields(retrievedFields);
         		methCall.setReturnedFields(returnedFields);
@@ -348,8 +441,7 @@ public class MyParser {
     			}    			    				
     		}    		
     		break;
-    	}
-    	
+    	}    	
     }
     
     private ArrayList<VerifiedInformation> handleAssertStatement(MethodCallExpr assertCall, ArrayList<MethodCall> methodCalls) {
@@ -389,7 +481,7 @@ public class MyParser {
     	if (expr instanceof NameExpr) {		
     		//get full name of the verified info
     		NameExpr nameExpr = (NameExpr) expr;
-    		String verifiedName = getTypeNNameOfReturnValue(nameExpr);
+    		String verifiedName = getTypeNNameOfNameExpr(nameExpr);
     		
     		// search for the source method call of the verifiedName
         	MethodCall sourceMC = getSourceMethodCallOfVerifiedName(verifiedName, mcPosition, methodCalls);
@@ -467,8 +559,7 @@ public class MyParser {
 	    				MethodCall.addNewMethodCall(verifiedMethCalls, mCall);
 	    				break;
 	    			}
-    			}
-    			    				
+    			}    			    				
     		}
 		}
     	return verifiedMethCalls;
@@ -485,104 +576,24 @@ public class MyParser {
 		}
 		return null;
     }
-    
-    private String getTypeNNameOfReturnValue(NameExpr nameExpr) {
-    	String typeNName = "";
-    	String varName = nameExpr.getName().getIdentifier();
-		ResolvedValueDeclaration valueDeclaration = nameExpr.resolve();
-		
-		typeNName = getTypeNNameOfVariable(valueDeclaration, varName);
-//		ResolvedType type = valueDeclaration.getType();
-//		if (type instanceof ResolvedPrimitiveType) {
-//			typeNName = varName;
-//		}
-//		else if (type instanceof ResolvedReferenceType) {    			
-//			ResolvedReferenceType referenceType = (ResolvedReferenceType)type;    			
-//			typeNName = referenceType.getQualifiedName() + "." + varName;
-//		}
-		return typeNName;
-    }
-    
-    private String getTypeNNameOfVariable(ResolvedValueDeclaration valueDeclaration, String varName) {
-    	String typeNName = "";
-    	
-		ResolvedType type = valueDeclaration.getType();
-		if (type instanceof ResolvedPrimitiveType) {
-			typeNName = varName;
-		}
-		else if (type instanceof ResolvedReferenceType) {    			
-			ResolvedReferenceType referenceType = (ResolvedReferenceType)type;    			
-			typeNName = referenceType.getQualifiedName() + "." + varName;
-		}
-		return typeNName;
-    }
         
-    private void analyzeCalledMethod(MethodDeclaration method, String callingObject, ArrayList<String> modifiedFields,
+    private void collectAllFields(MethodDeclaration method, String callingObjOrClass, ArrayList<String> modifiedFields,
     		ArrayList<String> returnedFields, ArrayList<String> retrievedFields, boolean isFromSuperConstructor) {
             
     	// check all field accesses
     	for (FieldAccessExpr expr: method.findAll(FieldAccessExpr.class)) {
-    		String fieldAccess = getObjectField(expr, callingObject, isFromSuperConstructor);
+    		String fieldAccess = getObjectField(expr, callingObjOrClass, isFromSuperConstructor);
     		if (fieldAccess != null)
     			updateFieldsAccessListByCalledMethod(expr, fieldAccess, modifiedFields, returnedFields, retrievedFields);        	
     	}
             
     	// check for fields which are accessed simply by name
     	for (NameExpr expr: method.findAll(NameExpr.class)) {
-    		String classField = getClassFieldByNameOnly(expr, callingObject, isFromSuperConstructor); 
-    		if (classField != null)
-    			updateFieldsAccessListByCalledMethod(expr, classField, modifiedFields, returnedFields, retrievedFields);
+    		String fieldByName = getVariableByNameOnly(expr, callingObjOrClass, isFromSuperConstructor); 
+    		if (fieldByName != null)
+    			updateFieldsAccessListByCalledMethod(expr, fieldByName, modifiedFields, returnedFields, retrievedFields);
         }
-    }
-    
-    private String getObjectField (FieldAccessExpr expr, String callingObject, boolean isFromSuperConstructor) {
-    	String fieldAccess = null;  
-    	if (isFromSuperConstructor) {
-    		fieldAccess = callingObject + "." + expr.getNameAsString();
-    	}
-    	else {
-    		Expression scope = expr.getScope();
-            if (scope instanceof ThisExpr) {
-                ThisExpr thisExpr = (ThisExpr) scope;
-                ResolvedTypeDeclaration type = thisExpr.resolve();
-                fieldAccess = type.getQualifiedName() + "." + callingObject + "." + expr.getNameAsString();
-                System.out.println("\tField Access: " + fieldAccess);
-            } else if (scope instanceof NameExpr) {
-                NameExpr nameExpr = (NameExpr) scope;
-                ResolvedValueDeclaration value = nameExpr.resolve();
-                ResolvedReferenceType type = value.getType().asReferenceType();
-                fieldAccess = type.getQualifiedName() + "." + callingObject + "." + value.getName()
-                			  + "." + expr.getNameAsString();
-                System.out.println("\tField Access: " + fieldAccess);
-            } else {
-                throw new RuntimeException("Unknown instance for: " + scope);
-            }
-    	}
-    		
-        
-        return fieldAccess;
-    }
-    
-    private String getClassFieldByNameOnly (NameExpr expr, String callingObject, boolean isFromSuperConstructor) {
-    	String classField = null;
-    	if (isFromSuperConstructor) {
-    		classField = callingObject + "." + expr.getNameAsString();
-    	}
-    	else {
-    		ResolvedValueDeclaration value = expr.resolve();
-            if (value.isField()) {
-                ResolvedFieldDeclaration field = (ResolvedFieldDeclaration) value;
-                ResolvedTypeDeclaration type = field.declaringType();
-                if (callingObject == null)
-                	classField = type.getQualifiedName() + "." + field.getName();
-                else
-                	classField = type.getQualifiedName() + "." + callingObject + "." + field.getName();
-                System.out.println("\tClass field: " + classField);
-            }
-    	}
-        
-        return classField;
-    }
+    }    
     
     private void updateFieldsAccessListByCalledMethod(Expression expr, String fieldAccess, ArrayList<String> modifiedFields, ArrayList<String> returnedFields, ArrayList<String> retrievedFields)
     {
@@ -653,20 +664,54 @@ public class MyParser {
         return returnValues;
     }
     
-    private void handleInnerMethodExpression(MethodCallExpr call, String callingObject,	ArrayList<String> modifiedFields,
-    		ArrayList<String> returnedFields, ArrayList<String> retrievedFields, boolean isFromSuperConstructor) {
+    private void handleInnerMethodExpression(MethodCallExpr call, String outerCallingObjectOrClass,	ArrayList<String> modifiedFields,
+    										 ArrayList<String> returnedFields, ArrayList<String> retrievedFields,
+    										 boolean isFromSuperConstructor, ArrayList<ArrayList<String>> argParaTrace,
+    										 int methodLayer) {
         System.out.println("Inner Call: " + call.getNameAsString());
+        String innerCallingObjOrClass = "";
         try {
-            ResolvedMethodDeclaration declaration = call.resolve();
+        	ResolvedMethodDeclaration declaration = call.resolve();
             if (declaration instanceof JavaParserMethodDeclaration) {
                 MethodDeclaration d = ((JavaParserMethodDeclaration) declaration).getWrappedNode();
-//                System.out.println("Inner Lines: " + d.getRange());
+                
+                if (methodLayer > 0)  {//meaning dont handle this issue with inner method inside a constructor call
+	                //check if any argument of the outer method call is used as an argument of this inner method call            	
+	                for (int i = 0; i < d.getParameters().size(); i++) {
+	                	Parameter para = d.getParameter(i);
+	                	Expression arg = call.getArgument(i);
+	                	for (ArrayList<String> argPara : argParaTrace) {
+	                		String outerPara = argPara.get(methodLayer);
+	                		if (outerPara.equals(arg.toString())) {
+	                			argPara.add(para.getNameAsString());
+	                		}
+	                	}                	
+	                }                
+                }
                 // get calling object name
-//                if (call.getScope().isPresent())
-//                	callingObject = call.getScope().get().toString();                	
-                analyzeInnerCalledMethod(d, callingObject, modifiedFields, returnedFields, retrievedFields, isFromSuperConstructor);
-//                d.findAll(Expression.class).forEach(c -> System.out.println("\tInner Call: " + c));
-                d.findAll(MethodCallExpr.class).forEach(c -> handleInnerMethodExpression(c, callingObject, modifiedFields, returnedFields, retrievedFields, isFromSuperConstructor));
+                if (call.getScope().isPresent())
+                	innerCallingObjOrClass = call.getScope().get().toString();     
+                else 
+                	innerCallingObjOrClass = outerCallingObjectOrClass;
+                System.out.println(innerCallingObjOrClass);
+                
+                analyzeInnerCalledMethod(d, innerCallingObjOrClass, modifiedFields, returnedFields, retrievedFields, isFromSuperConstructor);
+                
+                if (methodLayer > 0)  {//meaning dont handle this issue with inner method inside a constructor call
+                	//update fields
+                    updatedFields(modifiedFields, argParaTrace, methodLayer);
+                    updatedFields(returnedFields, argParaTrace, methodLayer);
+                    updatedFields(retrievedFields, argParaTrace, methodLayer);
+                }
+                
+                
+                // handle inner method calls
+                if (methodLayer > 0)
+                	methodLayer++;
+                for (MethodCallExpr c: d.findAll(MethodCallExpr.class)) {
+                	handleInnerMethodExpression(c, innerCallingObjOrClass, modifiedFields, returnedFields, retrievedFields, isFromSuperConstructor, argParaTrace, methodLayer);
+                }
+//                d.findAll(MethodCallExpr.class).forEach(c -> handleInnerMethodExpression(c, callingObject, modifiedFields, returnedFields, retrievedFields, isFromSuperConstructor, outerArgParaTrace));
             }
             //TODO: external producer does not affect anything
             // outer is mutator + inner is external producer -> this e. producer cannot help to modify field(s)
@@ -687,24 +732,27 @@ public class MyParser {
     }
     
     
+    
     private void analyzeInnerCalledMethod(MethodDeclaration method, String callingObject, ArrayList<String> modifiedFields,
     		ArrayList<String> returnedFields, ArrayList<String> retrievedFields, boolean isFromSuperConstructor) {
     	
     	boolean isGet = false;
     	boolean isInternalProducer = false;
     	boolean[] isPotentialAccessor = new boolean[2];
-        	
-    	// check all field accesses
-    	for (FieldAccessExpr expr: method.findAll(FieldAccessExpr.class)) {
-    		String fieldAccess = getObjectField(expr, callingObject, isFromSuperConstructor);
-    		updateFieldsAccessListByCalledMethod(expr, fieldAccess, modifiedFields, returnedFields, retrievedFields);
-        }
     	
-    	// check for fields which are accessed simply by name
-    	for (NameExpr expr: method.findAll(NameExpr.class)) {
-    		String classField = getClassFieldByNameOnly(expr, callingObject, isFromSuperConstructor); 
-    		updateFieldsAccessListByCalledMethod(expr, classField, modifiedFields, returnedFields, retrievedFields);
-        }
+    	collectAllFields(method, callingObject, modifiedFields, returnedFields, retrievedFields, isFromSuperConstructor);
+        	
+//    	// check all field accesses
+//    	for (FieldAccessExpr expr: method.findAll(FieldAccessExpr.class)) {
+//    		String fieldAccess = getObjectField(expr, callingObject, isFromSuperConstructor);
+//    		updateFieldsAccessListByCalledMethod(expr, fieldAccess, modifiedFields, returnedFields, retrievedFields);
+//        }
+//    	
+//    	// check for fields which are accessed simply by name
+//    	for (NameExpr expr: method.findAll(NameExpr.class)) {
+//    		String classField = getVariableByNameOnly(expr, callingObject, isFromSuperConstructor); 
+//    		updateFieldsAccessListByCalledMethod(expr, classField, modifiedFields, returnedFields, retrievedFields);
+//        }
 
     	if (modifiedFields != null)
     		System.out.println("\tModified Fields: " + modifiedFields.toString());
@@ -726,9 +774,9 @@ public class MyParser {
         	isInternalProducer = true;
         	System.out.println("\tInner method is Internal Producer!"); 
         }		
-    }
-    
+    }    
         
+    
     private MethodCall handleConstructorCall(ObjectCreationExpr constructorCall, String varName) {
     	MethodCall methCall = new MethodCall();
     	methCall.setMethodType(MethodCall.CREATIONAL);    	
@@ -746,9 +794,9 @@ public class MyParser {
         	boolean isFromSuperConstructor = false;
             ConstructorDeclaration constrDeclaration = ((JavaParserConstructorDeclaration) declaration).getWrappedNode();
             ArrayList<String> modifiedFields = new ArrayList<String>();
-            analyzeCalledConstructor(constrDeclaration, varName, modifiedFields, isFromSuperConstructor); // TODO: not sure how it works when replacing callingObj with initializedObj
+            analyzeCalledConstructor(constrDeclaration, varName, modifiedFields, isFromSuperConstructor);
             for (MethodCallExpr c : constrDeclaration.findAll(MethodCallExpr.class)) {
-            	handleInnerMethodExpression(c, varName, modifiedFields, null, null, isFromSuperConstructor);
+            	handleInnerMethodExpression(c, varName, modifiedFields, null, null, isFromSuperConstructor, null, -1);
             }
             	
             
@@ -763,7 +811,7 @@ public class MyParser {
                     ConstructorDeclaration resolvedConstrDeclaration = ((JavaParserConstructorDeclaration) resolvedDeclaration).getWrappedNode();
                  	analyzeCalledConstructor(resolvedConstrDeclaration, initializedObj, modifiedFields, isFromSuperConstructor); // TODO: not sure how it works when replacing callingObj with initializedObj
                  	for (MethodCallExpr c : resolvedConstrDeclaration.findAll(MethodCallExpr.class)) {
-                 		handleInnerMethodExpression(c, varName, modifiedFields, null, null, isFromSuperConstructor);
+                 		handleInnerMethodExpression(c, varName, modifiedFields, null, null, isFromSuperConstructor, null, -1);
                  	}
             	}
             }
@@ -773,6 +821,7 @@ public class MyParser {
         return methCall;
     }
         
+    
     
     private void analyzeCalledConstructor(ConstructorDeclaration constrDeclaration, String initializedObj, ArrayList<String> modifiedFields, boolean isSuperConstructor) {
         // check all field accesses
@@ -784,11 +833,11 @@ public class MyParser {
             
     	// check for fields which are accessed simply by name
     	for (NameExpr expr: constrDeclaration.findAll(NameExpr.class)) {  
-    		String classField = getClassFieldByNameOnly(expr, initializedObj, isSuperConstructor); 
+    		String classField = getVariableByNameOnly(expr, initializedObj, isSuperConstructor); 
     		if (classField != null)
     			updateFieldsAccessListByCalledMethod(expr, classField, modifiedFields, null, null);
     	}
-    }
+    }    
     
     
     private MethodCallPosition getExpressionPosition(Expression expr) {
@@ -796,6 +845,102 @@ public class MyParser {
     	int endLine = expr.getRange().get().end.line;
     	return new MethodCallPosition(beginLine, endLine);
     }
+    
+    
+    
+    
+    
+    private String getObjectField (FieldAccessExpr expr, String callingObjOrClass, boolean isFromSuperConstructor) {
+    	String fieldAccess = null;  
+    	if (isFromSuperConstructor) {
+    		fieldAccess = callingObjOrClass + "." + expr.getNameAsString();
+    	}
+    	else {
+    		Expression scope = expr.getScope();
+            if (scope instanceof ThisExpr) {
+                ThisExpr thisExpr = (ThisExpr) scope;
+                ResolvedTypeDeclaration type = thisExpr.resolve();
+                fieldAccess = type.getQualifiedName() + "." + callingObjOrClass + "." + expr.getNameAsString();
+                System.out.println("\tField Access: " + fieldAccess);
+            } else if (scope instanceof NameExpr) {
+                NameExpr nameExpr = (NameExpr) scope;
+                ResolvedValueDeclaration value = nameExpr.resolve();
+                ResolvedReferenceType type = value.getType().asReferenceType();
+                if (type.getQualifiedName().substring(type.getQualifiedName().lastIndexOf(".")+1).equals(callingObjOrClass))
+//                if (callingObjOrClass == null) 
+                	// meaning this is a class name
+                	fieldAccess = type.getQualifiedName() + "." + value.getName()
+      			  				  + "." + expr.getNameAsString();
+                else
+                	fieldAccess = type.getQualifiedName() + "." + callingObjOrClass + "." + value.getName()
+                			      + "." + expr.getNameAsString();
+                System.out.println("\tField Access: " + fieldAccess);
+            } else {
+                throw new RuntimeException("Unknown instance for: " + scope);
+            }
+    	}
+        return fieldAccess;
+    }
+    
+    
+    private String getVariableByNameOnly (NameExpr expr, String callingObjOrClass, boolean isFromSuperConstructor) {
+    	String fieldbyName = null;
+    	if (isFromSuperConstructor) {
+    		fieldbyName = callingObjOrClass + "." + expr.getNameAsString();
+    	}
+    	else {
+    		ResolvedValueDeclaration value = expr.resolve();
+            if (value.isField()) {
+                ResolvedFieldDeclaration field = (ResolvedFieldDeclaration) value;
+                ResolvedTypeDeclaration type = field.declaringType();
+                //TODO: when is it null???
+                //case 2: when the callingObjOrClass is a class name
+                if (callingObjOrClass == null ||
+                	type.getQualifiedName().substring(type.getQualifiedName().lastIndexOf(".")+1).equals(callingObjOrClass))
+                	fieldbyName = type.getQualifiedName() + "." + field.getName();
+                else
+                	fieldbyName = type.getQualifiedName() + "." + callingObjOrClass + "." + field.getName();
+                System.out.println("\tField by name: " + fieldbyName);
+            }
+            else if (value instanceof JavaParserParameterDeclaration) {
+            	Parameter para = ((JavaParserParameterDeclaration) value).getWrappedNode();
+            	ResolvedParameterDeclaration reParaDecl = para.resolve();
+        		ResolvedType resolvedType = reParaDecl.getType();
+            	fieldbyName = getTypeNNameOfVariable(resolvedType, expr.getNameAsString());
+//            	ResolvedReferenceType resolvedType = reParaDecl.getType().asReferenceType();
+//            	fieldbyName = type.getQualifiedName() + "." + expr.getNameAsString();
+            }
+    	}        
+        return fieldbyName;
+    }
+    
+    
+    
+    private String getTypeNNameOfNameExpr(NameExpr nameExpr) {
+    	String typeNName = "";
+    	String varName = nameExpr.getName().getIdentifier();
+		ResolvedValueDeclaration valueDeclaration = nameExpr.resolve();	
+		ResolvedType type = valueDeclaration.getType();
+		typeNName = getTypeNNameOfVariable(type, varName);
+		return typeNName;
+    }
+    
+    
+    private String getTypeNNameOfVariable(ResolvedType type, String varName) {
+    	String typeNName = "";
+		if (type instanceof ResolvedPrimitiveType) {
+			typeNName = varName;
+		}
+		else if (type instanceof ResolvedReferenceType) {    			
+			ResolvedReferenceType referenceType = (ResolvedReferenceType)type;    			
+			typeNName = referenceType.getQualifiedName() + "." + varName;
+		}
+		return typeNName;
+    }
 }
 
+
+
+
+	
 
