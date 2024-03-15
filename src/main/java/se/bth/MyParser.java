@@ -31,6 +31,8 @@ import com.github.javaparser.ast.expr.ArrayCreationExpr;
 import com.github.javaparser.ast.expr.ArrayInitializerExpr;
 import com.github.javaparser.ast.expr.AssignExpr;
 import com.github.javaparser.ast.expr.BinaryExpr;
+import com.github.javaparser.ast.expr.CastExpr;
+import com.github.javaparser.ast.expr.EnclosedExpr;
 import com.github.javaparser.ast.expr.Expression;
 import com.github.javaparser.ast.expr.FieldAccessExpr;
 import com.github.javaparser.ast.expr.IntegerLiteralExpr;
@@ -335,6 +337,27 @@ public class MyParser {
         }
     }
     
+    private String getCallingObjectOrClass(MethodCallExpr methCallExpr) {
+    	// get the name of the calling object OR class
+        Expression scope = methCallExpr.getScope().get();
+        String callingObjOrClass = scope.toString();
+        CastExpr castExpr = null;
+        // handle casting if any
+        if (scope.isEnclosedExpr()) {
+        	Expression innerExpr = ((EnclosedExpr) scope).getInner();
+        	if (innerExpr.isCastExpr()) {
+        		castExpr = (CastExpr) innerExpr;
+//        		type = castExpr.calculateResolvedType().describe();
+        		callingObjOrClass = castExpr.getExpression().toString();
+        	}
+        }
+        else if (scope.isCastExpr()) {
+        	castExpr = (CastExpr) scope;
+    		callingObjOrClass = castExpr.getExpression().toString();
+        }
+        return callingObjOrClass;
+    }
+    
     private MethodCall handleMethodExpression(MethodCallExpr methCallExpr, ArrayList<MethodCall> methodCalls) {
         MethodCall methCall = new MethodCall();
         methCall.setMethodCallName(methCallExpr.getTokenRange().get().toString());
@@ -350,7 +373,24 @@ public class MyParser {
             if (declaration instanceof JavaParserMethodDeclaration) {
                 MethodDeclaration methDeclaration = ((JavaParserMethodDeclaration) declaration).getWrappedNode();
                 // get the name of the calling object OR class
-                String callingObjOrClass = methCallExpr.getScope().get().toString();
+                String callingObjOrClass = getCallingObjectOrClass(methCallExpr);
+//                Expression scope = methCallExpr.getScope().get();
+//                String callingObjOrClass = scope.toString();
+//                CastExpr castExpr = null;
+                // handle casting if any
+//                if (scope.isEnclosedExpr()) {
+//                	Expression innerExpr = ((EnclosedExpr) scope).getInner();
+//                	if (innerExpr.isCastExpr()) {
+//                		castExpr = (CastExpr) innerExpr;
+////                		type = castExpr.calculateResolvedType().describe();
+//                		callingObjOrClass = castExpr.getExpression().toString();
+//                	}
+//                }
+//                else if (scope.isCastExpr()) {
+//                	castExpr = (CastExpr) scope;
+//            		callingObjOrClass = castExpr.getExpression().toString();
+//                }
+                
 //                NameExpr ne = (NameExpr) methCallExpr.getScope().get(); 
 //                ResolvedType typeOfCallingObj = ne.calculateResolvedType();
 //                boolean isClassName = false;
@@ -521,11 +561,8 @@ public class MyParser {
     	ArrayList<VerifiedInformation> allVerifiedInfo = new ArrayList<VerifiedInformation>();    	
     	for (Expression argument : arguments) { 
 			// TODO: handle argument to assertTrue(a.equals(b))
-    		if (argument instanceof NameExpr) {
-    			VerifiedInformation verifiedInfo = handleArgumentfromAssertStmt(argument, methodCalls, mcPosition);
-    			allVerifiedInfo.add(verifiedInfo);
-    		}
-    		else if (argument instanceof MethodCallExpr) {
+    		if (argument instanceof NameExpr || argument instanceof EnclosedExpr ||
+    			argument instanceof MethodCallExpr || argument instanceof CastExpr) {
     			VerifiedInformation verifiedInfo = handleArgumentfromAssertStmt(argument, methodCalls, mcPosition);
     			allVerifiedInfo.add(verifiedInfo);
     		}
@@ -549,10 +586,30 @@ public class MyParser {
     														 MethodCallPosition mcPosition) 
     {    	
     	VerifiedInformation verifiedInfo = new VerifiedInformation();
-    	if (expr instanceof NameExpr) {		
+    	if (expr instanceof NameExpr || expr instanceof EnclosedExpr || expr instanceof CastExpr) {		
     		//get full name of the verified info
-    		NameExpr nameExpr = (NameExpr) expr;
-    		String verifiedName = getTypeNNameOfNameExpr(nameExpr);
+    		String verifiedName = "";
+    		CastExpr castExpr = null;
+    		if (expr instanceof NameExpr) {
+    			NameExpr nameExpr = (NameExpr) expr;
+        		verifiedName = getTypeNNameOfNameExpr(nameExpr);
+    		}
+    		else if (expr instanceof EnclosedExpr) {
+    			Expression innerExpr = ((EnclosedExpr) expr).getInner();
+            	if (innerExpr.isCastExpr()) {
+            		castExpr = (CastExpr) innerExpr;
+            		verifiedName = getTypeNNameOfVariable(castExpr.calculateResolvedType(), 
+            											  castExpr.getExpression().toString());            		            		
+//            		String type = castExpr.calculateResolvedType().describe();
+//            		verifiedName = type + "." + castExpr.getExpression().toString();
+            	}
+    		}
+    		else if (expr.isCastExpr()) {
+    			castExpr = (CastExpr) expr;
+        		verifiedName = getTypeNNameOfVariable(castExpr.calculateResolvedType(), 
+        											  castExpr.getExpression().toString());   
+            }
+    			
     		
     		// search for the source method call of the verifiedName
         	MethodCall sourceMC = getSourceMethodCallOfVerifiedName(verifiedName, mcPosition, methodCalls);
@@ -636,6 +693,7 @@ public class MyParser {
     	return verifiedMethCalls;
     }
     
+    
     private MethodCall getSourceMethodCallOfVerifiedName(String verifiedName, MethodCallPosition mcPosition, ArrayList<MethodCall> methodCalls) {
     	ArrayList<MethodCall> methCallsAboveAssertStmt = MethodCall.getMethodCallAboveAPosition(mcPosition, methodCalls);
 		for (int i = methCallsAboveAssertStmt.size()-1; i >= 0; i--) {
@@ -654,6 +712,7 @@ public class MyParser {
     	// check all field accesses
     	for (FieldAccessExpr expr: method.findAll(FieldAccessExpr.class)) {
     		String fieldAccess = getObjectField(expr, callingObjOrClass, isFromSuperConstructor);
+    		
     		if (fieldAccess != null)
     			updateFieldsAccessListByCalledMethod(expr, fieldAccess, modifiedFields, returnedFields, retrievedFields);        	
     	}
@@ -680,6 +739,7 @@ public class MyParser {
     	if (retrievedFields != null && !retrievedFields.contains(fieldAccess)) 
 			retrievedFields.add(fieldAccess);
     }
+    
     
     private int getFieldInteractionType (Expression originalExpr) {
     	boolean fromReturnStmt = false;
@@ -717,6 +777,7 @@ public class MyParser {
         return undentifiedFieldInteractionType;
     }
     
+    
     private boolean[] isPotentialAccessorMethod (MethodDeclaration method) {
     	int numStmts = 0;
         boolean hasReturnStmt = false;
@@ -734,6 +795,7 @@ public class MyParser {
         
         return returnValues;
     }
+    
     
     private void handleInnerMethodExpression(MethodCallExpr call, String outerCallingObjectOrClass,	ArrayList<String> modifiedFields,
     										 ArrayList<String> returnedFields, ArrayList<String> retrievedFields,
@@ -760,10 +822,13 @@ public class MyParser {
 	                }                
                 }
                 // get calling object name
-                if (call.getScope().isPresent())
-                	innerCallingObjOrClass = call.getScope().get().toString();     
-                else 
+                if (call.getScope().isPresent()) {
+//                	innerCallingObjOrClass = call.getScope().get().toString();     
+                	innerCallingObjOrClass = getCallingObjectOrClass(call);
+                }
+                else {
                 	innerCallingObjOrClass = outerCallingObjectOrClass;
+                }
                 System.out.println(innerCallingObjOrClass);
                 
                 analyzeInnerCalledMethod(d, innerCallingObjOrClass, modifiedFields, returnedFields, retrievedFields, isFromSuperConstructor);
@@ -932,6 +997,7 @@ public class MyParser {
         return fieldAccess;
     }
        
+    
     private String getVariableByNameOnly (NameExpr expr, String callingObjOrClass, boolean isFromSuperConstructor) {
     	String fieldbyName = null;
     	if (isFromSuperConstructor) {
@@ -963,6 +1029,7 @@ public class MyParser {
         return fieldbyName;
     }
     
+    
     private String getTypeNNameOfNameExpr(NameExpr nameExpr) {
     	String typeNName = "";
     	String varName = nameExpr.getName().getIdentifier();
@@ -972,6 +1039,7 @@ public class MyParser {
 		return typeNName;
     }
     
+   
     private String getTypeNNameOfVariable(ResolvedType type, String varName) {
     	String typeNName = "";
 		if (type instanceof ResolvedPrimitiveType) {
