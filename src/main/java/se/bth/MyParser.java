@@ -13,6 +13,7 @@ import java.util.LinkedList;
 import java.util.stream.Collectors;
 
 import com.github.javaparser.ParserConfiguration;
+import com.github.javaparser.Position;
 import com.github.javaparser.ParseResult;
 
 import com.github.javaparser.ast.CompilationUnit;
@@ -25,10 +26,14 @@ import com.github.javaparser.ast.body.FieldDeclaration;
 import com.github.javaparser.ast.body.MethodDeclaration;
 import com.github.javaparser.ast.body.Parameter;
 import com.github.javaparser.ast.body.VariableDeclarator;
+import com.github.javaparser.ast.expr.ArrayAccessExpr;
+import com.github.javaparser.ast.expr.ArrayCreationExpr;
+import com.github.javaparser.ast.expr.ArrayInitializerExpr;
 import com.github.javaparser.ast.expr.AssignExpr;
 import com.github.javaparser.ast.expr.BinaryExpr;
 import com.github.javaparser.ast.expr.Expression;
 import com.github.javaparser.ast.expr.FieldAccessExpr;
+import com.github.javaparser.ast.expr.IntegerLiteralExpr;
 import com.github.javaparser.ast.expr.LiteralExpr;
 import com.github.javaparser.ast.expr.MarkerAnnotationExpr;
 import com.github.javaparser.ast.expr.MethodCallExpr;
@@ -50,6 +55,7 @@ import com.github.javaparser.resolution.declarations.ResolvedMethodDeclaration;
 import com.github.javaparser.resolution.declarations.ResolvedParameterDeclaration;
 import com.github.javaparser.resolution.declarations.ResolvedTypeDeclaration;
 import com.github.javaparser.resolution.declarations.ResolvedValueDeclaration;
+import com.github.javaparser.resolution.types.ResolvedArrayType;
 import com.github.javaparser.resolution.types.ResolvedPrimitiveType;
 import com.github.javaparser.resolution.types.ResolvedReferenceType;
 import com.github.javaparser.resolution.types.ResolvedType;
@@ -130,15 +136,16 @@ public class MyParser {
             for (Expression expr: method.findAll(Expression.class)) {
             	if (expr instanceof VariableDeclarationExpr) {
             		ArrayList<MethodCall> mCalls = handleVariableDeclarationExpression((VariableDeclarationExpr) expr);
-            		MethodCall.addMultipleNewMethodCall(methodCalls, mCalls);
+            		MethodCall.addMultipleNewMethodCall(methodCalls, mCalls, true);
                 }
             	else if (expr instanceof MethodCallExpr) { //&& !analysedMethodCallExprs.contains(expr)            		
                 	MethodCall methCall = handleMethodExpression((MethodCallExpr) expr, methodCalls);                	
-                	MethodCall.addNewMethodCall(methodCalls, methCall);
+                	MethodCall.addNewMethodCall(methodCalls, methCall, true);
                 } 
                 else if (expr instanceof AssignExpr) {
-                	MethodCall methCall = handleAssignExpr((AssignExpr) expr);
-                	MethodCall.addNewMethodCall(methodCalls, methCall);                    
+                	MethodCall methCall = handleAssignExpr((AssignExpr) expr, methodCalls);
+                	if (methCall != null)
+                		MethodCall.addNewMethodCall(methodCalls, methCall, true);                    
                 }
             	// TODO: think if other expression types are important here as well
 //                else if (!(expr instanceof MarkerAnnotationExpr)) {
@@ -170,25 +177,37 @@ public class MyParser {
     		ArrayList<MethodCall> allVerifiedMethCallsPerAssertStmt = new ArrayList<MethodCall>();
     		for (VerifiedInformation verifiedInfo : allVerfiedInfo) {
     			ArrayList<MethodCall> verifiedMCs = verifiedInfo.getVerifiedMethodCalls();
-    			MethodCall.addMultipleNewMethodCall(allVerifiedMethCallsPerAssertStmt, verifiedMCs);
+    			MethodCall.addMultipleNewMethodCall(allVerifiedMethCallsPerAssertStmt, verifiedMCs, false);
     			if (allVerifiedMethCallsPerAssertStmt.size() == 2)
     				return true;
     		}
-    		MethodCall.addMultipleNewMethodCall(allVerifiedMethCalls, allVerifiedMethCallsPerAssertStmt);
+    		MethodCall.addMultipleNewMethodCall(allVerifiedMethCalls, allVerifiedMethCallsPerAssertStmt, false);
     		if (allVerifiedMethCalls.size() == 2)
 				return true;
     	}
     	return false;
     }    
     
-    private MethodCall handleAssignExpr(AssignExpr expr) {
+    private MethodCall handleAssignExpr(AssignExpr expr, ArrayList<MethodCall> methodCalls) {
     	MethodCall methCall = new MethodCall();
         Expression valueExpr = expr.getValue();
         Expression targetExpr = expr.getTarget();
         String targetVar = targetExpr.toString();
+        String valueVar = "";
         // get type and name of the target variable if possible
         if (targetExpr instanceof NameExpr)
         	targetVar = getTypeNNameOfNameExpr((NameExpr) targetExpr);        
+        else if (targetExpr instanceof ArrayAccessExpr) {
+        	ArrayAccessExpr arrayExpr = (ArrayAccessExpr) targetExpr;
+        	Expression name = arrayExpr.getName();
+        	Expression index = arrayExpr.getIndex();
+        	//TODO: assumption: handle only simple cases of array: name is name expression and index is integer
+        	if (name instanceof NameExpr && index instanceof IntegerLiteralExpr) {
+//        		targetVar = getTypeNNameOfNameExpr((NameExpr) name) + "." + arrayExpr.getIndex();  
+//        		targetVar = name.toString() + "." + arrayExpr.getIndex();  
+        		targetVar = arrayExpr.toString();
+        	}        	    
+        }
         
         if (valueExpr instanceof MethodCallExpr) {
 			methCall = handleMethodExpression((MethodCallExpr) valueExpr, null);    			
@@ -197,7 +216,27 @@ public class MyParser {
 		} 
 		else if (valueExpr instanceof ObjectCreationExpr) {
 			methCall = handleConstructorCall((ObjectCreationExpr) valueExpr, targetVar);
-	    }    	
+	    }  
+		else if (valueExpr instanceof ArrayAccessExpr) {
+			ArrayAccessExpr arrayExpr = (ArrayAccessExpr) valueExpr;
+        	Expression name = arrayExpr.getName();
+        	Expression index = arrayExpr.getIndex();
+        	//TODO: assumption: handle only simple cases of array: name is name expression and index is integer
+        	if (name instanceof NameExpr && index instanceof IntegerLiteralExpr) {
+        		valueVar = arrayExpr.toString();
+        		MethodCallPosition pos = getExpressionPosition(expr);
+        		String s = getTypeNNameOfNameExpr((NameExpr) name);
+        		s = s.substring(0, s.lastIndexOf(".")) + "." + valueVar;
+        		MethodCall mCall = getSourceMethodCallOfVerifiedName (s, pos, methodCalls);
+        		if (mCall != null) {
+        			updateFieldsDueToArrayAssign (mCall.getModifiedFields(), targetVar, valueVar);
+            		updateFieldsDueToArrayAssign (mCall.getRetrievedFields(), targetVar, valueVar);
+            		updateFieldsDueToArrayAssign (mCall.getReturnedFields(), targetVar, valueVar);
+            		mCall.setReturnedValue(targetVar);
+        		}
+        	}
+        	return null;
+		}
     	return methCall;
     }
     
@@ -208,23 +247,41 @@ public class MyParser {
 //    		ResolvedValueDeclaration reVarDeclarator = varDeclarator.resolve();
 //    		varName = getTypeNNameOfVariable(reVarDeclarator, varName);   		
     		   		
-    		Expression initializer = varDeclarator.getInitializer().get();
-    		
+    		Expression initializer = varDeclarator.getInitializer().get();    		
     		if (initializer instanceof MethodCallExpr) {
     			MethodCall methCall = handleMethodExpression((MethodCallExpr) initializer, null);  
     			ResolvedValueDeclaration reVarDeclarator = varDeclarator.resolve();
         		varName = getTypeNNameOfVariable(reVarDeclarator.getType(), varName);
     			methCall.setReturnedValue(varName);
     			System.out.println("\tReturn value: " + methCall.getReturnedValue());
-    			MethodCall.addNewMethodCall(methodCalls, methCall);
+    			MethodCall.addNewMethodCall(methodCalls, methCall, true);
     		} 
     		else if (initializer instanceof ObjectCreationExpr) {
     			MethodCall methCall = handleConstructorCall((ObjectCreationExpr) initializer, varName);
-    			MethodCall.addNewMethodCall(methodCalls, methCall);
+    			MethodCall.addNewMethodCall(methodCalls, methCall, true);
     	    }
+    		else if (initializer instanceof ArrayCreationExpr) { 
+    			MethodCall methCall = handleArrayCreationExpression((ArrayCreationExpr) initializer, null, varName); 
+    			ResolvedValueDeclaration reVarDeclarator = varDeclarator.resolve();
+        		varName = getTypeNNameOfVariable(reVarDeclarator.getType(), varName);
+    			methCall.setReturnedValue(varName);
+    			System.out.println("\tReturn value: " + methCall.getReturnedValue());
+    			MethodCall.addNewMethodCall(methodCalls, methCall, true);
+    		}
     	}
     	return methodCalls;
     }  
+    
+    private MethodCall handleArrayCreationExpression (ArrayCreationExpr arrayCreationExpr, ArrayList<MethodCall> methodCalls, String varName) {
+    	MethodCall methCall = new MethodCall();    	
+        if (arrayCreationExpr.getElementType().isClassOrInterfaceType()) {
+        	methCall.setMethodCallName(arrayCreationExpr.getTokenRange().get().toString());
+            methCall.setPosition(getExpressionPosition(arrayCreationExpr));
+            methCall.setMethodType(MethodCall.CREATIONAL);
+            System.out.println("Call: " + methCall.getMethodCallName());
+        }
+    	return methCall;
+    }
     
     private String getTypeNNameOfArgument (Expression arg) {
     	String typeNName = "";
@@ -248,7 +305,21 @@ public class MyParser {
     	return typeNName;
     }
     
-    private void updatedFields(ArrayList<String> fields, ArrayList<ArrayList<String>> argParaTraces, int methLayer) {
+    private void updateFieldsDueToArrayAssign(ArrayList<String> fields, String targetVar, String valueVar) {
+    	for (int i = 0; i < fields.size(); i++) {
+        	String mField = fields.get(i);
+        	if (mField.contains(valueVar + ".")) {
+    			String arrayPos = valueVar + ".";
+    			int p = mField.indexOf(arrayPos) + arrayPos.length();
+//    			String updatedMField = mField.substring(0, mField.indexOf(arrayPos)) + "." + targetVar + mField.substring(p+1);
+    			String updatedMField = targetVar + "." + mField.substring(p);
+    			fields.add(i, updatedMField);
+    			fields.remove(i+1);
+    		}
+        }
+    }
+    
+    private void updateFieldsDueToArgParaChanges(ArrayList<String> fields, ArrayList<ArrayList<String>> argParaTraces, int methLayer) {
     	for (int i = 0; i < fields.size(); i++) {
         	String mField = fields.get(i);
         	for (ArrayList<String> argParaTrace : argParaTraces) {
@@ -280,14 +351,14 @@ public class MyParser {
                 MethodDeclaration methDeclaration = ((JavaParserMethodDeclaration) declaration).getWrappedNode();
                 // get the name of the calling object OR class
                 String callingObjOrClass = methCallExpr.getScope().get().toString();
-                NameExpr ne = (NameExpr) methCallExpr.getScope().get(); 
-                ResolvedType typeOfCallingObj = ne.calculateResolvedType();
-                boolean isClassName = false;
-                if (typeOfCallingObj.isReferenceType()) {
-                	String s = typeOfCallingObj.describe().substring(typeOfCallingObj.describe().lastIndexOf(".")+1);
-                	if (callingObjOrClass.equals(s))
-                		isClassName = true;
-                }           
+//                NameExpr ne = (NameExpr) methCallExpr.getScope().get(); 
+//                ResolvedType typeOfCallingObj = ne.calculateResolvedType();
+//                boolean isClassName = false;
+//                if (typeOfCallingObj.isReferenceType()) {
+//                	String s = typeOfCallingObj.describe().substring(typeOfCallingObj.describe().lastIndexOf(".")+1);
+//                	if (callingObjOrClass.equals(s))
+//                		isClassName = true;
+//                }           
                 	
                 ArrayList<String> modifiedFields = new ArrayList<String>();
                 ArrayList<String> returnedFields = new ArrayList<String>();
@@ -326,9 +397,9 @@ public class MyParser {
                 }
                 
                 //update related fields based on the arguments
-                updatedFields(modifiedFields, argParaTraces, methodLayer);
-                updatedFields(retrievedFields, argParaTraces, methodLayer);
-                updatedFields(returnedFields, argParaTraces, methodLayer);
+                updateFieldsDueToArgParaChanges(modifiedFields, argParaTraces, methodLayer);
+                updateFieldsDueToArgParaChanges(retrievedFields, argParaTraces, methodLayer);
+                updateFieldsDueToArgParaChanges(returnedFields, argParaTraces, methodLayer);
                 
                 // handle inner method calls
                 methodLayer++;
@@ -506,7 +577,7 @@ public class MyParser {
         		verifiedInfo.getVerifiedInfo().addAll(retrievedFields); 
         		//TODO: assumption: a get method has only 1 retrieved field!
         		ArrayList<MethodCall> verifiedMethodCalls = getVerifiedMethodCalls(verifiedInfo, methodCalls);
-        		MethodCall.addMultipleNewMethodCall(verifiedInfo.getVerifiedMethodCalls(), verifiedMethodCalls);
+        		MethodCall.addMultipleNewMethodCall(verifiedInfo.getVerifiedMethodCalls(), verifiedMethodCalls, false);
 //				verifiedInfo.getVerifiedMethodCalls().add(verifiedMethodCall);
     		}    		
     	}
@@ -521,20 +592,20 @@ public class MyParser {
 				verifiedInfo.getVerifiedInfo().addAll(methCall.getModifiedFields());
 
 				methCall.setReturnedValue("return value of " + methCall.getMethodCallName());
-				MethodCall.addNewMethodCall(methodCalls, methCall);				
+				MethodCall.addNewMethodCall(methodCalls, methCall, true);				
 				verifiedInfo.getVerifiedMethodCalls().add(methCall);
 				verifiedInfo.getVerifiedInfo().add(methCall.getReturnedValue());
 			}
 			else if (methType.equals(MethodCall.GET) || methType.equals(MethodCall.EXTERNAL_PRODUCER)) {
 				verifiedInfo.getVerifiedInfo().addAll(methCall.getRetrievedFields());
 				ArrayList<MethodCall> verifiedMethodCalls = getVerifiedMethodCalls(verifiedInfo, methodCalls);
-				MethodCall.addMultipleNewMethodCall(verifiedInfo.getVerifiedMethodCalls(), verifiedMethodCalls);
+				MethodCall.addMultipleNewMethodCall(verifiedInfo.getVerifiedMethodCalls(), verifiedMethodCalls, false);
 //				verifiedInfo.setVerifiedMethodCall(verifiedMethodCall);
 				
 			}
 			else if (methType.equals(MethodCall.INTERNAL_PRODUCER)) {
 				methCall.setReturnedValue("return value of " + methCall.getMethodCallName()); // as the return value cannot be calculated on the spot!
-				MethodCall.addNewMethodCall(methodCalls, methCall);				
+				MethodCall.addNewMethodCall(methodCalls, methCall, true);				
 				verifiedInfo.getVerifiedMethodCalls().add(methCall);
 				verifiedInfo.getVerifiedInfo().add(methCall.getReturnedValue());
 			}				
@@ -556,7 +627,7 @@ public class MyParser {
     				ArrayList<String> modifiedFields = mCall.getModifiedFields();
 	    			if (modifiedFields.contains(retrievedField)) {
 	    				//TODO: assumption: a get method has only 1 retrieved field!
-	    				MethodCall.addNewMethodCall(verifiedMethCalls, mCall);
+	    				MethodCall.addNewMethodCall(verifiedMethCalls, mCall, false);
 	    				break;
 	    			}
     			}    			    				
@@ -590,7 +661,7 @@ public class MyParser {
     	// check for fields which are accessed simply by name
     	for (NameExpr expr: method.findAll(NameExpr.class)) {
     		String fieldByName = getVariableByNameOnly(expr, callingObjOrClass, isFromSuperConstructor); 
-    		if (fieldByName != null)
+    		if (fieldByName != null && fieldByName.contains("."))
     			updateFieldsAccessListByCalledMethod(expr, fieldByName, modifiedFields, returnedFields, retrievedFields);
         }
     }    
@@ -699,9 +770,9 @@ public class MyParser {
                 
                 if (methodLayer > 0)  {//meaning dont handle this issue with inner method inside a constructor call
                 	//update fields
-                    updatedFields(modifiedFields, argParaTrace, methodLayer);
-                    updatedFields(returnedFields, argParaTrace, methodLayer);
-                    updatedFields(retrievedFields, argParaTrace, methodLayer);
+                    updateFieldsDueToArgParaChanges(modifiedFields, argParaTrace, methodLayer);
+                    updateFieldsDueToArgParaChanges(returnedFields, argParaTrace, methodLayer);
+                    updateFieldsDueToArgParaChanges(retrievedFields, argParaTrace, methodLayer);
                 }
                 
                 
@@ -731,8 +802,6 @@ public class MyParser {
         }
     }
     
-    
-    
     private void analyzeInnerCalledMethod(MethodDeclaration method, String callingObject, ArrayList<String> modifiedFields,
     		ArrayList<String> returnedFields, ArrayList<String> retrievedFields, boolean isFromSuperConstructor) {
     	
@@ -741,18 +810,6 @@ public class MyParser {
     	boolean[] isPotentialAccessor = new boolean[2];
     	
     	collectAllFields(method, callingObject, modifiedFields, returnedFields, retrievedFields, isFromSuperConstructor);
-        	
-//    	// check all field accesses
-//    	for (FieldAccessExpr expr: method.findAll(FieldAccessExpr.class)) {
-//    		String fieldAccess = getObjectField(expr, callingObject, isFromSuperConstructor);
-//    		updateFieldsAccessListByCalledMethod(expr, fieldAccess, modifiedFields, returnedFields, retrievedFields);
-//        }
-//    	
-//    	// check for fields which are accessed simply by name
-//    	for (NameExpr expr: method.findAll(NameExpr.class)) {
-//    		String classField = getVariableByNameOnly(expr, callingObject, isFromSuperConstructor); 
-//    		updateFieldsAccessListByCalledMethod(expr, classField, modifiedFields, returnedFields, retrievedFields);
-//        }
 
     	if (modifiedFields != null)
     		System.out.println("\tModified Fields: " + modifiedFields.toString());
@@ -776,7 +833,6 @@ public class MyParser {
         }		
     }    
         
-    
     private MethodCall handleConstructorCall(ObjectCreationExpr constructorCall, String varName) {
     	MethodCall methCall = new MethodCall();
     	methCall.setMethodType(MethodCall.CREATIONAL);    	
@@ -786,7 +842,8 @@ public class MyParser {
         
 //    	ObjectCreationExpr constructorCall = (ObjectCreationExpr) initializer;
         ResolvedConstructorDeclaration declaration = constructorCall.resolve();
-        String initializedObj = declaration.getQualifiedName().substring(0, declaration.getQualifiedName().lastIndexOf(".")) + "." + varName;
+        String initializedObj = declaration.getQualifiedName().substring(0, declaration.getQualifiedName().lastIndexOf(".")) +
+        						"." + varName;
         System.out.println("\tInitialized object: " + initializedObj);
         methCall.setReturnedValue(initializedObj);
 
@@ -821,8 +878,6 @@ public class MyParser {
         return methCall;
     }
         
-    
-    
     private void analyzeCalledConstructor(ConstructorDeclaration constrDeclaration, String initializedObj, ArrayList<String> modifiedFields, boolean isSuperConstructor) {
         // check all field accesses
     	for (FieldAccessExpr expr: constrDeclaration.findAll(FieldAccessExpr.class)) {
@@ -839,16 +894,11 @@ public class MyParser {
     	}
     }    
     
-    
     private MethodCallPosition getExpressionPosition(Expression expr) {
     	int beginLine = expr.getRange().get().begin.line;
     	int endLine = expr.getRange().get().end.line;
     	return new MethodCallPosition(beginLine, endLine);
     }
-    
-    
-    
-    
     
     private String getObjectField (FieldAccessExpr expr, String callingObjOrClass, boolean isFromSuperConstructor) {
     	String fieldAccess = null;  
@@ -881,8 +931,7 @@ public class MyParser {
     	}
         return fieldAccess;
     }
-    
-    
+       
     private String getVariableByNameOnly (NameExpr expr, String callingObjOrClass, boolean isFromSuperConstructor) {
     	String fieldbyName = null;
     	if (isFromSuperConstructor) {
@@ -914,8 +963,6 @@ public class MyParser {
         return fieldbyName;
     }
     
-    
-    
     private String getTypeNNameOfNameExpr(NameExpr nameExpr) {
     	String typeNName = "";
     	String varName = nameExpr.getName().getIdentifier();
@@ -925,7 +972,6 @@ public class MyParser {
 		return typeNName;
     }
     
-    
     private String getTypeNNameOfVariable(ResolvedType type, String varName) {
     	String typeNName = "";
 		if (type instanceof ResolvedPrimitiveType) {
@@ -934,6 +980,17 @@ public class MyParser {
 		else if (type instanceof ResolvedReferenceType) {    			
 			ResolvedReferenceType referenceType = (ResolvedReferenceType)type;    			
 			typeNName = referenceType.getQualifiedName() + "." + varName;
+		}
+		else if (type instanceof ResolvedArrayType) {
+			ResolvedArrayType arrayType = (ResolvedArrayType)type;
+			boolean isPrimitivetype = arrayType.getComponentType().isPrimitive();
+			if (isPrimitivetype) {
+				typeNName = varName;
+			}
+			else if (arrayType.getComponentType().isReferenceType()) {
+				typeNName = arrayType.getComponentType().describe() + "." + varName;
+			}
+			
 		}
 		return typeNName;
     }

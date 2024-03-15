@@ -10,8 +10,6 @@ import se.bth.MyParser;
 
 public class App
 {
-
-
     public static void main( String[] args )
     {
 //        if (args.length != 2) {
