@@ -228,7 +228,8 @@ public class MyParser {
         		valueVar = arrayExpr.toString();
         		MethodCallPosition pos = getExpressionPosition(expr);
         		String s = getTypeNNameOfNameExpr((NameExpr) name);
-        		s = s.substring(0, s.lastIndexOf(".")) + "." + valueVar;
+//        		s = s.substring(0, s.lastIndexOf(".")) + "." + valueVar;
+        		s = valueVar;
         		MethodCall mCall = getSourceMethodCallOfVerifiedName (s, pos, methodCalls);
         		if (mCall != null) {
         			updateFieldsDueToArrayAssign (mCall.getModifiedFields(), targetVar, valueVar);
@@ -253,7 +254,7 @@ public class MyParser {
     		if (initializer instanceof MethodCallExpr) {
     			MethodCall methCall = handleMethodExpression((MethodCallExpr) initializer, null);  
     			ResolvedValueDeclaration reVarDeclarator = varDeclarator.resolve();
-        		varName = getTypeNNameOfVariable(reVarDeclarator.getType(), varName);
+//        		varName = getTypeNNameOfVariable(reVarDeclarator.getType(), varName);
     			methCall.setReturnedValue(varName);
     			System.out.println("\tReturn value: " + methCall.getReturnedValue());
     			MethodCall.addNewMethodCall(methodCalls, methCall, true);
@@ -264,11 +265,14 @@ public class MyParser {
     	    }
     		else if (initializer instanceof ArrayCreationExpr) { 
     			MethodCall methCall = handleArrayCreationExpression((ArrayCreationExpr) initializer, null, varName); 
-    			ResolvedValueDeclaration reVarDeclarator = varDeclarator.resolve();
-        		varName = getTypeNNameOfVariable(reVarDeclarator.getType(), varName);
-    			methCall.setReturnedValue(varName);
-    			System.out.println("\tReturn value: " + methCall.getReturnedValue());
-    			MethodCall.addNewMethodCall(methodCalls, methCall, true);
+//    			ResolvedValueDeclaration reVarDeclarator = varDeclarator.resolve();
+//        		varName = getTypeNNameOfVariable(reVarDeclarator.getType(), varName);
+    			if (!methCall.getMethodCallName().equals("")) {
+    				methCall.setReturnedValue(varName);
+        			System.out.println("\tReturn value: " + methCall.getReturnedValue());
+        			MethodCall.addNewMethodCall(methodCalls, methCall, true);
+    			}
+    			
     		}
     	}
     	return methodCalls;
@@ -515,7 +519,8 @@ public class MyParser {
             if (value.isField()) {
                 ResolvedFieldDeclaration field = (ResolvedFieldDeclaration) value;
                 ResolvedTypeDeclaration type = field.declaringType();
-                callingObject = type.getQualifiedName() + "." + field.getName();
+//                callingObject = type.getQualifiedName() + "." + field.getName();
+                callingObject = field.getName();
             }
         }        
         System.out.println("\tCalling object: " + callingObject);
@@ -598,16 +603,18 @@ public class MyParser {
     			Expression innerExpr = ((EnclosedExpr) expr).getInner();
             	if (innerExpr.isCastExpr()) {
             		castExpr = (CastExpr) innerExpr;
-            		verifiedName = getTypeNNameOfVariable(castExpr.calculateResolvedType(), 
-            											  castExpr.getExpression().toString());            		            		
+            		verifiedName = castExpr.getExpression().toString();
+//            		verifiedName = getTypeNNameOfVariable(castExpr.calculateResolvedType(), 
+//            											  castExpr.getExpression().toString());            		            		
 //            		String type = castExpr.calculateResolvedType().describe();
 //            		verifiedName = type + "." + castExpr.getExpression().toString();
             	}
     		}
     		else if (expr.isCastExpr()) {
     			castExpr = (CastExpr) expr;
-        		verifiedName = getTypeNNameOfVariable(castExpr.calculateResolvedType(), 
-        											  castExpr.getExpression().toString());   
+        		verifiedName = castExpr.getExpression().toString();
+//        		verifiedName = getTypeNNameOfVariable(castExpr.calculateResolvedType(), 
+//        											  castExpr.getExpression().toString());   
             }
     			
     		
@@ -637,6 +644,11 @@ public class MyParser {
         		MethodCall.addMultipleNewMethodCall(verifiedInfo.getVerifiedMethodCalls(), verifiedMethodCalls, false);
 //				verifiedInfo.getVerifiedMethodCalls().add(verifiedMethodCall);
     		}    		
+    		else { // meaning: unspecified method type == like: simple adding the parameters [add(intx, int y)]
+    			verifiedInfo.getVerifiedInfo().add(verifiedName);
+    			verifiedInfo.getVerifiedMethodCalls().add(verifiedInfo.getSourceMethodCall());
+    			
+    		}
     	}
     	else if (expr instanceof MethodCallExpr) {
 			MethodCallExpr methCallExpr = (MethodCallExpr) expr;
@@ -907,8 +919,9 @@ public class MyParser {
         
 //    	ObjectCreationExpr constructorCall = (ObjectCreationExpr) initializer;
         ResolvedConstructorDeclaration declaration = constructorCall.resolve();
-        String initializedObj = declaration.getQualifiedName().substring(0, declaration.getQualifiedName().lastIndexOf(".")) +
-        						"." + varName;
+//        String initializedObj = declaration.getQualifiedName().substring(0, declaration.getQualifiedName().lastIndexOf(".")) +
+//        						"." + varName;
+        String initializedObj = varName;
         System.out.println("\tInitialized object: " + initializedObj);
         methCall.setReturnedValue(initializedObj);
 
@@ -974,8 +987,9 @@ public class MyParser {
     		Expression scope = expr.getScope();
             if (scope instanceof ThisExpr) {
                 ThisExpr thisExpr = (ThisExpr) scope;
-                ResolvedTypeDeclaration type = thisExpr.resolve();
-                fieldAccess = type.getQualifiedName() + "." + callingObjOrClass + "." + expr.getNameAsString();
+//                ResolvedTypeDeclaration type = thisExpr.resolve();
+//                fieldAccess = type.getQualifiedName() + "." + callingObjOrClass + "." + expr.getNameAsString();
+              fieldAccess = callingObjOrClass + "." + expr.getNameAsString();
                 System.out.println("\tField Access: " + fieldAccess);
             } else if (scope instanceof NameExpr) {
                 NameExpr nameExpr = (NameExpr) scope;
@@ -984,11 +998,13 @@ public class MyParser {
                 if (type.getQualifiedName().substring(type.getQualifiedName().lastIndexOf(".")+1).equals(callingObjOrClass))
 //                if (callingObjOrClass == null) 
                 	// meaning this is a class name
-                	fieldAccess = type.getQualifiedName() + "." + value.getName()
-      			  				  + "." + expr.getNameAsString();
+//                	fieldAccess = type.getQualifiedName() + "." + value.getName()
+//      			  				  + "." + expr.getNameAsString();
+                	fieldAccess = value.getName() + "." + expr.getNameAsString();
                 else
-                	fieldAccess = type.getQualifiedName() + "." + callingObjOrClass + "." + value.getName()
-                			      + "." + expr.getNameAsString();
+//                	fieldAccess = type.getQualifiedName() + "." + callingObjOrClass + "." + value.getName()
+//                			      + "." + expr.getNameAsString();
+                	fieldAccess = callingObjOrClass + "." + value.getName() + "." + expr.getNameAsString();
                 System.out.println("\tField Access: " + fieldAccess);
             } else {
                 throw new RuntimeException("Unknown instance for: " + scope);
@@ -1012,16 +1028,19 @@ public class MyParser {
                 //case 2: when the callingObjOrClass is a class name
                 if (callingObjOrClass == null ||
                 	type.getQualifiedName().substring(type.getQualifiedName().lastIndexOf(".")+1).equals(callingObjOrClass))
-                	fieldbyName = type.getQualifiedName() + "." + field.getName();
+//                	fieldbyName = type.getQualifiedName() + "." + field.getName();
+                	fieldbyName = field.getName();
                 else
-                	fieldbyName = type.getQualifiedName() + "." + callingObjOrClass + "." + field.getName();
+//                	fieldbyName = type.getQualifiedName() + "." + callingObjOrClass + "." + field.getName();
+                	fieldbyName = callingObjOrClass + "." + field.getName();
                 System.out.println("\tField by name: " + fieldbyName);
             }
             else if (value instanceof JavaParserParameterDeclaration) {
-            	Parameter para = ((JavaParserParameterDeclaration) value).getWrappedNode();
-            	ResolvedParameterDeclaration reParaDecl = para.resolve();
-        		ResolvedType resolvedType = reParaDecl.getType();
-            	fieldbyName = getTypeNNameOfVariable(resolvedType, expr.getNameAsString());
+//            	Parameter para = ((JavaParserParameterDeclaration) value).getWrappedNode();
+//            	ResolvedParameterDeclaration reParaDecl = para.resolve();
+//        		ResolvedType resolvedType = reParaDecl.getType();
+        		fieldbyName = expr.getNameAsString();
+//            	fieldbyName = getTypeNNameOfVariable(resolvedType, expr.getNameAsString());
 //            	ResolvedReferenceType resolvedType = reParaDecl.getType().asReferenceType();
 //            	fieldbyName = type.getQualifiedName() + "." + expr.getNameAsString();
             }
@@ -1033,9 +1052,10 @@ public class MyParser {
     private String getTypeNNameOfNameExpr(NameExpr nameExpr) {
     	String typeNName = "";
     	String varName = nameExpr.getName().getIdentifier();
-		ResolvedValueDeclaration valueDeclaration = nameExpr.resolve();	
-		ResolvedType type = valueDeclaration.getType();
-		typeNName = getTypeNNameOfVariable(type, varName);
+//		ResolvedValueDeclaration valueDeclaration = nameExpr.resolve();	
+//		ResolvedType type = valueDeclaration.getType();
+//		typeNName = getTypeNNameOfVariable(type, varName);
+    	typeNName = varName;
 		return typeNName;
     }
     
