@@ -1,7 +1,10 @@
 package se.bth;
 
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashMap;
+import static java.util.Comparator.comparing;
 
 public class MethodCall {
 	
@@ -152,10 +155,25 @@ public class MethodCall {
     	for (MethodCall c : methCalls) {
     		if (c.getPosition().getEndLine() < mcPosition.getBeginLine())
     			returnCalls.add(c);
-    		else
-    			break;
+//    		else
+//    			break;
     	}
-    	return returnCalls;
+    	ArrayList<MethodCall> sortedReturnCalls = MethodCall.sortMethodCallsByPosition(returnCalls);
+    	
+    	return sortedReturnCalls;
+    }
+    
+    public static ArrayList<MethodCall> sortMethodCallsByPosition(ArrayList<MethodCall> methCalls) {    	
+    	ArrayList<MethodCall> sort = new ArrayList<MethodCall>(methCalls);
+        Collections.sort(sort, new Comparator<MethodCall>() {
+                public int compare(MethodCall o1, MethodCall o2) {
+                	return o1.getPosition().compareTo(o2.getPosition());
+//                       return o1.getPosition().getBeginLine() < o2.getPosition().getBeginLine() ? -1 : 
+//                    	   	  o1.getPosition().getBeginLine() == o2.getPosition().getBeginLine() ? 0 : 1;
+                }
+          }
+       );
+       return sort;
     }
     
     @Override

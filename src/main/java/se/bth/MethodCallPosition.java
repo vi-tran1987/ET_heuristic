@@ -1,6 +1,6 @@
 package se.bth;
 
-public class MethodCallPosition {
+public class MethodCallPosition implements Comparable<MethodCallPosition>{
 	private int beginLine;
 	private int endLine;
 	
@@ -35,6 +35,19 @@ public class MethodCallPosition {
 		if (this.getBeginLine() == p.getBeginLine() && this.getEndLine() == p.getEndLine())
 			return true;
 		return false;
+	}
+
+	@Override
+	public int compareTo(MethodCallPosition o) {
+		if (this.getBeginLine() < o.getBeginLine())
+			return -1;
+		else if (this.getBeginLine() == o.getBeginLine() && this.getEndLine() < o.getEndLine())
+			return -1;
+		else if (this.getBeginLine() == o.getBeginLine() && this.getEndLine() > o.getEndLine())
+			return 1;
+		else if (this.getBeginLine() > o.getBeginLine())
+			return 1;
+		return 0;
 	}
 
 }
