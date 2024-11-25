@@ -150,7 +150,7 @@ public class MethodCall {
     	return null;
     }
  
-    public static ArrayList<MethodCall> getMethodCallAboveAPosition (MethodCallPosition mcPosition, ArrayList<MethodCall> methCalls) {
+    public static ArrayList<MethodCall> getMethodCallsAboveAPosition (MethodCallPosition mcPosition, ArrayList<MethodCall> methCalls) {
     	ArrayList<MethodCall> returnCalls = new ArrayList<MethodCall>();
     	for (MethodCall c : methCalls) {
     		if (c.getPosition().getEndLine() < mcPosition.getBeginLine())
